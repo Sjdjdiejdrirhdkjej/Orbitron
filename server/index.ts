@@ -25,7 +25,9 @@ async function start() {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const distRoot = path.resolve(__dirname, "../dist");
     app.use(express.static(distRoot));
-    app.get("*", (_req, res) => {
+    // SPA fallback — Express 5 / path-to-regexp v8 no longer accepts bare "*",
+    // so use a catch-all middleware after the static handler instead.
+    app.use((_req, res) => {
       res.sendFile(path.join(distRoot, "index.html"));
     });
   }
