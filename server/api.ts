@@ -66,7 +66,11 @@ interface ImageBody {
   prompt: string;
   size?: "1024x1024" | "1024x1536" | "1536x1024" | "auto";
   n?: number;
+  model?: string;
 }
+
+const IMAGE_MODEL_IDS = ["gpt-image-1", "gemini-2.5-flash-image"] as const;
+type ImageModelId = (typeof IMAGE_MODEL_IDS)[number];
 
 export function registerApiRoutes(app: Express): void {
   // GET /api/status — ping each provider and report aggregate + per-provider health.
@@ -181,7 +185,12 @@ export function registerApiRoutes(app: Express): void {
   // Body: { prompt: string, size?: "1024x1024"|"1024x1536"|"1536x1024"|"auto", n?: number }
   // Returns: { data: [{ b64_json, revised_prompt }], model, latencyMs }
   app.post("/api/images", requireAuth, async (req: Request, res: Response) => {
-    const { prompt, size = "1024x1024", n = 1 } = (req.body || {}) as ImageBody;
+    const {
+      prompt,
+      size = "1024x1024",
+      n = 1,
+      model = "gpt-image-1",
+    } = (req.body || {}) as ImageBody;
 
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: { message: "prompt is required" } });
@@ -189,9 +198,46 @@ export function registerApiRoutes(app: Express): void {
     if (n < 1 || n > 4) {
       return res.status(400).json({ error: { message: "n must be between 1 and 4" } });
     }
+    if (!IMAGE_MODEL_IDS.includes(model as ImageModelId)) {
+      return res.status(400).json({
+        error: { message: `Unsupported image model: ${model}` },
+      });
+    }
 
     const startTime = Date.now();
     try {
+      if (model === "gemini-2.5-flash-image") {
+        // Gemini generates one image per call; fan out for n>1.
+        const calls = Array.from({ length: n }, () =>
+          (gemini.models.generateContent as (a: unknown) => Promise<unknown>)({
+            model: "gemini-2.5-flash-image",
+            contents: prompt,
+            config: { responseModalities: ["IMAGE"] },
+          }),
+        );
+        const results = await Promise.all(calls);
+        const data = results.map((r) => {
+          const parts =
+            (r as { candidates?: { content?: { parts?: unknown[] } }[] })
+              .candidates?.[0]?.content?.parts ?? [];
+          const imgPart = parts.find(
+            (p): p is { inlineData: { data: string } } =>
+              !!(p as { inlineData?: { data?: string } })?.inlineData?.data,
+          );
+          return {
+            b64_json: imgPart?.inlineData.data ?? null,
+            revised_prompt: null,
+          };
+        });
+
+        return res.json({
+          model: "gemini-2.5-flash-image",
+          latencyMs: Date.now() - startTime,
+          data,
+        });
+      }
+
+      // Default: OpenAI gpt-image-1
       const response = await openai.images.generate({
         model: "gpt-image-1",
         prompt,

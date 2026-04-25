@@ -2,11 +2,38 @@ import { useEffect, useRef, useState } from "react";
 import { Image as ImageIcon, Loader2, Download, Sparkles, Trash2, AlertCircle } from "lucide-react";
 
 type Size = "1024x1024" | "1024x1536" | "1536x1024" | "auto";
+type ImageModelId = "gpt-image-1" | "gemini-2.5-flash-image";
+
+interface ImageModelInfo {
+  id: ImageModelId;
+  label: string;
+  provider: string;
+  supportsSize: boolean;
+  blurb: string;
+}
+
+const IMAGE_MODELS: ImageModelInfo[] = [
+  {
+    id: "gpt-image-1",
+    label: "GPT Image 1",
+    provider: "OpenAI",
+    supportsSize: true,
+    blurb: "~$0.04/image · base64 PNG",
+  },
+  {
+    id: "gemini-2.5-flash-image",
+    label: "Gemini 2.5 Flash Image",
+    provider: "Google",
+    supportsSize: false,
+    blurb: "Fast · native multimodal",
+  },
+];
 
 interface GeneratedImage {
   id: string;
   prompt: string;
   size: Size;
+  model: ImageModelId;
   dataUrl: string;
   revisedPrompt: string | null;
   latencyMs: number;
@@ -14,6 +41,7 @@ interface GeneratedImage {
 }
 
 const STORAGE_KEY = "switchboard.images.v1";
+const MODEL_KEY = "switchboard.imageModel.v1";
 const SIZES: { value: Size; label: string }[] = [
   { value: "1024x1024", label: "Square · 1024" },
   { value: "1024x1536", label: "Portrait · 1024×1536" },
@@ -32,11 +60,34 @@ export default function Images() {
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState<Size>("1024x1024");
   const [count, setCount] = useState(1);
+  const [model, setModel] = useState<ImageModelId>(() => {
+    try {
+      const saved = localStorage.getItem(MODEL_KEY);
+      if (saved && IMAGE_MODELS.some((m) => m.id === saved)) {
+        return saved as ImageModelId;
+      }
+    } catch {
+      /* ignore */
+    }
+    return "gpt-image-1";
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<GeneratedImage[]>([]);
   const [lightbox, setLightbox] = useState<GeneratedImage | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const activeModel =
+    IMAGE_MODELS.find((m) => m.id === model) ?? IMAGE_MODELS[0];
+
+  // Persist model choice
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODEL_KEY, model);
+    } catch {
+      /* ignore */
+    }
+  }, [model]);
 
   // Load history from localStorage
   useEffect(() => {
@@ -71,7 +122,12 @@ export default function Images() {
       const res = await fetch("/api/images", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: trimmed, size, n: count }),
+        body: JSON.stringify({
+          prompt: trimmed,
+          size: activeModel.supportsSize ? size : undefined,
+          n: count,
+          model,
+        }),
       });
 
       if (!res.ok) {
@@ -90,6 +146,7 @@ export default function Images() {
           id: `${Date.now()}-${i}`,
           prompt: trimmed,
           size,
+          model,
           dataUrl: `data:image/png;base64,${img.b64_json}`,
           revisedPrompt: img.revised_prompt,
           latencyMs: data.latencyMs,
@@ -147,7 +204,7 @@ export default function Images() {
           <div className="min-w-0">
             <h1 className="font-bold text-base leading-tight">Image Playground</h1>
             <p className="text-xs text-muted-foreground font-mono truncate">
-              gpt-image-1 · ~$0.04/image · base64 PNG
+              {activeModel.id} · {activeModel.provider} · {activeModel.blurb}
             </p>
           </div>
         </div>
@@ -180,14 +237,36 @@ export default function Images() {
             <div className="border-t border-border px-3 py-2.5 flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
                 <select
-                  value={size}
-                  onChange={(e) => setSize(e.target.value as Size)}
+                  value={model}
+                  onChange={(e) => setModel(e.target.value as ImageModelId)}
                   disabled={busy}
+                  title="Image model"
                   className="text-xs font-mono bg-muted/40 border border-border rounded px-2 py-1.5 focus:outline-none focus:border-primary/50 disabled:opacity-50"
                 >
-                  {SIZES.map((s) => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
+                  {IMAGE_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label} · {m.provider}
+                    </option>
                   ))}
+                </select>
+                <select
+                  value={activeModel.supportsSize ? size : "auto"}
+                  onChange={(e) => setSize(e.target.value as Size)}
+                  disabled={busy || !activeModel.supportsSize}
+                  title={
+                    activeModel.supportsSize
+                      ? "Image size"
+                      : `${activeModel.label} chooses the size automatically`
+                  }
+                  className="text-xs font-mono bg-muted/40 border border-border rounded px-2 py-1.5 focus:outline-none focus:border-primary/50 disabled:opacity-50"
+                >
+                  {activeModel.supportsSize ? (
+                    SIZES.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))
+                  ) : (
+                    <option value="auto">Size · auto</option>
+                  )}
                 </select>
                 <select
                   value={count}
@@ -306,7 +385,9 @@ export default function Images() {
                         {img.prompt}
                       </p>
                       <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
-                        <span>{img.size === "auto" ? "auto" : img.size} · {(img.latencyMs / 1000).toFixed(1)}s</span>
+                        <span title={img.model}>
+                          {(IMAGE_MODELS.find((m) => m.id === img.model)?.provider) ?? "?"} · {img.size === "auto" ? "auto" : img.size} · {(img.latencyMs / 1000).toFixed(1)}s
+                        </span>
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => download(img)}
