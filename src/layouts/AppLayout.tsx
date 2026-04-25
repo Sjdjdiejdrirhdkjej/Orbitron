@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-import { MessageSquare, Cpu, Key, BarChart2, CreditCard, Settings, Menu, X } from "lucide-react";
+import { MessageSquare, Cpu, Key, BarChart2, CreditCard, Settings, Menu, X, Image as ImageIcon } from "lucide-react";
 
 export function AppLayout() {
   const location = useLocation();
@@ -13,6 +13,7 @@ export function AppLayout() {
 
   const navItems = [
     { name: "Chat", path: "/chat", icon: MessageSquare },
+    { name: "Images", path: "/images", icon: ImageIcon },
     { name: "Models", path: "/models", icon: Cpu },
     { name: "API Keys", path: "/keys", icon: Key },
     { name: "Usage", path: "/usage", icon: BarChart2 },

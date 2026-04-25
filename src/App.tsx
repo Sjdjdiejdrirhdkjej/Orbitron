@@ -6,6 +6,7 @@ import Landing from "./pages/Landing";
 import Models from "./pages/Models";
 import ModelDetail from "./pages/ModelDetail";
 import Chat from "./pages/Chat";
+import Images from "./pages/Images";
 import Keys from "./pages/Keys";
 import Usage from "./pages/Usage";
 import Credits from "./pages/Credits";
@@ -105,6 +106,7 @@ export default function App() {
         </Route>
         <Route element={<AppLayout />}>
           <Route path="/chat" element={<Chat />} />
+          <Route path="/images" element={<Images />} />
           <Route path="/models" element={<Models />} />
           <Route path="/models/:id" element={<ModelDetail />} />
           <Route path="/keys" element={<Keys />} />

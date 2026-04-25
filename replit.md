@@ -72,7 +72,7 @@ src/
   layouts/
     MarketingLayout.tsx  Public chrome
     AppLayout.tsx        Authenticated shell with mobile drawer
-  pages/                 One file per route
+  pages/                 One file per route (Chat, Images, Models, …)
   data/models.ts         14-model closed-source catalog
 ```
 
@@ -80,6 +80,7 @@ src/
 
 - `AppLayout` shows a mobile top bar with a hamburger that opens a slide-in nav drawer. Sidebar stays fixed at md+.
 - `Chat` uses two slide-out drawers on mobile (history left, parameters right) accessed via header buttons. Both convert to fixed sidebars at lg+.
+- `Images` is the image-generation playground (`/images`). Calls `POST /api/images`, renders results in a responsive grid with a lightbox + download, and persists the last 24 generations in `localStorage` under `switchboard.images.v1`.
 - Tables in `Keys`, `Credits`, and `Pricing` get horizontal scroll wrappers with `min-w-[…]` to stay legible on narrow viewports.
 - Headers across `Models`, `Settings`, `Keys`, `Usage`, `Credits` use stacked flex layouts on mobile and use `px-4 sm:px-6 lg:px-8` instead of fixed `px-8`.
 
