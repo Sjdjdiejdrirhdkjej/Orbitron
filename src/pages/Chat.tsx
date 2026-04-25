@@ -28,7 +28,7 @@ interface Conversation {
 const STORAGE_KEY = "switchboard.conversations.v1";
 const SETTINGS_KEY = "switchboard.chatSettings.v1";
 
-const DEFAULT_MODEL = "claude-sonnet-4.5";
+const DEFAULT_MODEL = "gpt-5.4";
 
 function loadConversations(): Conversation[] {
   if (typeof window === "undefined") return [];
@@ -144,9 +144,10 @@ export default function Chat() {
 
   function selectModel(modelId: string) {
     setSettings((s) => ({ ...s, modelId }));
-    if (active && active.messages.length === 0) {
+    if (active) {
+      const activeIdLocal = active.id;
       setConversations((prev) =>
-        prev.map((c) => (c.id === active.id ? { ...c, modelId } : c))
+        prev.map((c) => (c.id === activeIdLocal ? { ...c, modelId } : c))
       );
     }
   }

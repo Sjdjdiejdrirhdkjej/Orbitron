@@ -23,6 +23,8 @@ const gemini = new GoogleGenAI({
 });
 
 const openAIMap: Record<string, string> = {
+  "gpt-5.4": "gpt-5.4",
+  "gpt-5.2": "gpt-5.2",
   "gpt-5.1": "gpt-5.1",
   "gpt-5": "gpt-5",
   "gpt-5-mini": "gpt-5-mini",
@@ -32,6 +34,9 @@ const openAIMap: Record<string, string> = {
 };
 
 const anthropicMap: Record<string, string> = {
+  "claude-opus-4.7": "claude-opus-4-7",
+  "claude-sonnet-4.6": "claude-sonnet-4-6",
+  "claude-opus-4.6": "claude-opus-4-6",
   "claude-opus-4.5": "claude-opus-4-5",
   "claude-sonnet-4.5": "claude-sonnet-4-5",
   "claude-haiku-4.5": "claude-haiku-4-5",
@@ -115,10 +120,12 @@ export function registerChatRoutes(app: Express): void {
         const turns = messages
           .filter((m) => m.role !== "system")
           .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+        // Newer Anthropic models deprecate temperature/top_p/top_k.
+        const supportsTemperature = !/^claude-opus-4-(6|7)$|^claude-sonnet-4-6$/.test(realModel);
         const stream = anthropic.messages.stream({
           model: realModel,
           max_tokens: maxTokens ?? 4096,
-          temperature: temperature ?? 0.7,
+          ...(supportsTemperature ? { temperature: temperature ?? 0.7 } : {}),
           system: systemMessages || undefined,
           messages: turns,
         });
