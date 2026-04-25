@@ -240,6 +240,10 @@ async function query(text, params) {
 }
 async function ensureSchema() {
   await pool.query(`
+    -- gen_random_uuid() is in core Postgres 13+, but pgcrypto guarantees it on
+    -- older builds and is a no-op everywhere else.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       email TEXT UNIQUE NOT NULL,
