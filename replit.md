@@ -29,6 +29,16 @@ Global: Cmd/Ctrl+K opens a model search palette.
 
 The route in `server/chat.ts` maps the catalog model id to the real provider model and calls the appropriate SDK with streaming enabled. Conversations are persisted client-side in `localStorage`.
 
+## REST API
+
+`GET /api/models` — list every catalog model. Optional `?provider=OpenAI|Anthropic|Google` and `?modality=text|vision|audio|tools` filters. Each entry includes pricing, context window, throughput, latency, and modalities.
+
+`GET /api/models/:id` — fetch a single model by catalog id (404 if unknown).
+
+`POST /api/images` — generate an image with OpenAI `gpt-image-1`. Body: `{ prompt: string, size?: "1024x1024"|"1024x1536"|"1536x1024"|"auto", n?: 1..4 }`. Returns `{ model, latencyMs, data: [{ b64_json, revised_prompt }] }`.
+
+Both endpoints live in `server/api.ts` and are registered alongside the chat route in `server/index.ts`.
+
 ### Catalog → real model mapping
 
 Every catalog entry maps 1:1 to a real, currently-supported model on the AI Integrations proxy.
@@ -54,6 +64,7 @@ Every catalog entry maps 1:1 to a real, currently-supported model on the AI Inte
 server/
   index.ts               Express + Vite middleware, port 5000
   chat.ts                /api/chat — provider routing + SSE streaming
+  api.ts                 /api/models, /api/models/:id, /api/images
 src/
   App.tsx                Routes + Cmd+K palette
   main.tsx               BrowserRouter entry
