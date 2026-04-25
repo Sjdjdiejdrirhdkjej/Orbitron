@@ -1,17 +1,53 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Outlet, Link, useLocation, Navigate } from "react-router-dom";
-import { MessageSquare, Cpu, Key, BarChart2, CreditCard, Settings, Menu, X, Image as ImageIcon, LogOut } from "lucide-react";
+import {
+  MessageSquare,
+  Cpu,
+  Key,
+  BarChart2,
+  CreditCard,
+  Settings,
+  Menu,
+  X,
+  Image as ImageIcon,
+  LogOut,
+  ChevronUp,
+  ExternalLink,
+  UserCircle2,
+} from "lucide-react";
 import { useAuth, displayNameFor, initialsFor } from "../lib/auth";
 
 export function AppLayout() {
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const { user, loading, logout } = useAuth();
 
   // Close drawer on route change
   useEffect(() => {
     setDrawerOpen(false);
+    setAccountMenuOpen(false);
   }, [location.pathname]);
+
+  // Close the account menu on outside click + Escape key
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAccountMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [accountMenuOpen]);
 
   if (loading) {
     return (
@@ -91,8 +127,64 @@ export function AppLayout() {
         })}
       </nav>
 
-      <div className="p-4 border-t border-border">
-        <div className="flex items-center gap-3">
+      <div className="p-3 border-t border-border relative" ref={accountMenuRef}>
+        {accountMenuOpen && (
+          <div
+            role="menu"
+            aria-label="Account menu"
+            className="absolute left-3 right-3 bottom-full mb-2 bg-popover border border-border rounded-md shadow-lg overflow-hidden z-20 animate-fade-in"
+          >
+            <div className="px-3 py-2.5 border-b border-border">
+              <div className="text-sm font-medium truncate">{displayName}</div>
+              <div className="text-xs text-muted-foreground font-mono truncate">{emailLine}</div>
+            </div>
+            <Link
+              to="/settings"
+              role="menuitem"
+              className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
+              onClick={() => setAccountMenuOpen(false)}
+            >
+              <UserCircle2 className="w-4 h-4 text-muted-foreground" />
+              Account settings
+            </Link>
+            <a
+              href="https://replit.com/account"
+              target="_blank"
+              rel="noreferrer noopener"
+              role="menuitem"
+              className="flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
+              onClick={() => setAccountMenuOpen(false)}
+            >
+              <span className="flex items-center gap-2">
+                <ExternalLink className="w-4 h-4 text-muted-foreground" />
+                Manage on Replit
+              </span>
+            </a>
+            <div className="border-t border-border" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setAccountMenuOpen(false);
+                handleLogout();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign out
+            </button>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setAccountMenuOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={accountMenuOpen}
+          className={`w-full flex items-center gap-3 p-2 rounded-md border border-transparent hover:bg-accent hover:border-border transition-colors text-left ${
+            accountMenuOpen ? "bg-accent border-border" : ""
+          }`}
+        >
           {user.profileImageUrl ? (
             <img
               src={user.profileImageUrl}
@@ -109,15 +201,12 @@ export function AppLayout() {
             <span className="text-sm font-medium truncate">{displayName}</span>
             <span className="text-xs text-muted-foreground font-mono truncate">{emailLine}</span>
           </div>
-          <button
-            onClick={handleLogout}
-            className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-accent transition-colors"
-            title="Log out"
-            aria-label="Log out"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
+          <ChevronUp
+            className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${
+              accountMenuOpen ? "" : "rotate-180"
+            }`}
+          />
+        </button>
       </div>
     </div>
   );
