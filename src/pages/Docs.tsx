@@ -1,8 +1,16 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Copy } from "lucide-react";
 
 export default function Docs() {
+  const [baseUrl, setBaseUrl] = useState("https://your-deployment.replit.app");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setBaseUrl(window.location.origin);
+    }
+  }, []);
+
   return (
     <div className="container mx-auto px-4 flex items-start gap-12 py-12 animate-fade-in relative">
       <aside className="w-64 shrink-0 hidden lg:block sticky top-24 h-[calc(100vh-8rem)] overflow-y-auto pr-4">
@@ -60,14 +68,14 @@ export default function Docs() {
                 <code>{`import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "https://api.switchboard.dev/v1", // Note the base URL
+  baseURL: "${baseUrl}/api", // Note the base URL
   apiKey: process.env.SWITCHBOARD_API_KEY,
 });
 
 async function main() {
   const completion = await client.chat.completions.create({
     messages: [{ role: "user", content: "Say this is a test" }],
-    model: "anthropic/claude-sonnet-4.5", // Use the provider/model format
+    model: "claude-sonnet-4.6", // Catalog id from /api/models
   });
 
   console.log(completion.choices[0].message.content);
@@ -82,7 +90,7 @@ main();`}</code>
             <h2 className="text-2xl font-bold mb-4">Create chat completion</h2>
             <div className="flex items-center gap-3 mb-6">
               <span className="px-2 py-1 bg-green-500/20 text-green-400 font-mono text-xs font-bold rounded">POST</span>
-              <code className="text-sm font-mono text-muted-foreground">/v1/chat/completions</code>
+              <code className="text-sm font-mono text-muted-foreground">{baseUrl}/api/chat</code>
             </div>
             <p className="text-muted-foreground mb-6 text-sm leading-relaxed">
               Creates a model response for the given chat conversation.
@@ -169,12 +177,12 @@ main();`}</code>
                 <code>{`import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "https://api.switchboard.dev/v1",
+  baseURL: "${baseUrl}/api",
   apiKey: process.env.SWITCHBOARD_API_KEY,
 });
 
 const stream = await client.chat.completions.create({
-  model: "openai/gpt-5.4",
+  model: "gpt-5.4",
   messages: [{ role: "user", content: "Write a haiku about routing." }],
   stream: true,
 });
@@ -214,14 +222,14 @@ data: [DONE]`}</code>
             </p>
             <div className="rounded-lg border border-border overflow-hidden">
               <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
-                <code>{`const res = await fetch("https://api.switchboard.dev/v1/chat/completions", {
+                <code>{`const res = await fetch("${baseUrl}/api/chat", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
     Authorization: \`Bearer \${SWITCHBOARD_API_KEY}\`,
   },
   body: JSON.stringify({
-    model: "anthropic/claude-sonnet-4.6",
+    modelId: "claude-sonnet-4.6",
     messages,
     stream: true,
   }),
