@@ -1,35 +1,44 @@
-modules = ["nodejs-20", "web", "postgresql-16"]
+modules = [
+  'nodejs-20',
+  'web',
+  'postgresql-16',
+]
+
 [agent]
 expertMode = true
-stack = "BEST_EFFORT_FALLBACK"
-integrations = ["javascript_anthropic_ai_integrations:2.0.0", "javascript_openai_ai_integrations:2.0.0", "javascript_gemini_ai_integrations:2.0.0"]
+stack = 'BEST_EFFORT_FALLBACK'
+integrations = [
+  'javascript_anthropic_ai_integrations:2.0.0',
+  'javascript_openai_ai_integrations:2.0.0',
+  'javascript_gemini_ai_integrations:2.0.0',
+]
 
 [nix]
-channel = "stable-25_05"
+channel = 'stable-25_05'
 
 [workflows]
-runButton = "Project"
+runButton = 'Project'
 
 [[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
+name = 'Project'
+mode = 'parallel'
+author = 'agent'
 
 [[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Start application"
+task = 'workflow.run'
+args = 'Start application'
 
 [[workflows.workflow]]
-name = "Start application"
-author = "agent"
+name = 'Start application'
+author = 'agent'
 
 [[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run dev"
+task = 'shell.exec'
+args = 'npm run dev'
 waitForPort = 5000
 
 [workflows.workflow.metadata]
-outputType = "webview"
+outputType = 'webview'
 
 [[ports]]
 localPort = 5000
@@ -44,10 +53,10 @@ localPort = 24678
 externalPort = 3000
 
 [deployment]
-deploymentTarget = "autoscale"
-run = ["node", "dist-server/index.js"]
-build = ["npm", "run", "build"]
+deploymentTarget = 'autoscale'
+run = ['node', 'dist-server/index.js']
+build = ['npm', 'run', 'build']
 
 [postMerge]
-path = "scripts/post-merge.sh"
+path = 'scripts/post-merge.sh'
 timeoutMs = 120000
