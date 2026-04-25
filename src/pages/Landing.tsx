@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CopyButton } from "../components/CopyButton";
 
 export default function Landing() {
   const [baseUrl, setBaseUrl] = useState("https://your-deployment.replit.app");
@@ -8,6 +9,20 @@ export default function Landing() {
       setBaseUrl(window.location.origin);
     }
   }, []);
+
+  const heroCode = `import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "${baseUrl}/api",
+  apiKey: process.env.SWITCHBOARD_API_KEY,
+});
+
+const response = await client.chat.completions.create({
+  model: "claude-sonnet-4.6", // Just change this
+  messages: [
+    { role: "user", content: "Explain quantum gravity" }
+  ],
+});`;
 
   return (
     <div className="flex flex-col animate-fade-in">
@@ -75,6 +90,9 @@ export default function Landing() {
                   <div className="w-3 h-3 rounded-full bg-green-500/80" />
                 </div>
                 <div className="ml-4 font-mono text-xs text-muted-foreground">request.ts</div>
+                <div className="ml-auto">
+                  <CopyButton text={heroCode} />
+                </div>
               </div>
               <div className="p-6 overflow-x-auto text-sm font-mono leading-relaxed">
                 <pre>

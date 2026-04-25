@@ -75,6 +75,9 @@ src/
     MarketingLayout.tsx  Public chrome
     AppLayout.tsx        Authenticated shell with mobile drawer
   pages/                 One file per route (Chat, Images, Models, …)
+  components/
+    CopyButton.tsx       Reusable clipboard button with Check confirmation
+    ui/                  shadcn-style primitives
   data/models.ts         14-model closed-source catalog
 ```
 

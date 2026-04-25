@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Copy } from "lucide-react";
+import { CopyButton } from "../components/CopyButton";
 
 export default function Docs() {
   const [baseUrl, setBaseUrl] = useState("https://your-deployment.replit.app");
@@ -10,6 +10,108 @@ export default function Docs() {
       setBaseUrl(window.location.origin);
     }
   }, []);
+
+  const quickstartCode = `import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "${baseUrl}/api", // Note the base URL
+  apiKey: process.env.SWITCHBOARD_API_KEY,
+});
+
+async function main() {
+  const completion = await client.chat.completions.create({
+    messages: [{ role: "user", content: "Say this is a test" }],
+    model: "claude-sonnet-4.6", // Catalog id from /api/models
+  });
+
+  console.log(completion.choices[0].message.content);
+}
+
+main();`;
+
+  const responseJson = `{
+  "id": "chatcmpl-123",
+  "object": "chat.completion",
+  "created": 1677652288,
+  "model": "anthropic/claude-sonnet-4.5",
+  "system_fingerprint": "fp_44709d6fcb",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "This is a test."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 9,
+    "completion_tokens": 12,
+    "total_tokens": 21
+  }
+}`;
+
+  const streamingNodeCode = `import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "${baseUrl}/api",
+  apiKey: process.env.SWITCHBOARD_API_KEY,
+});
+
+const stream = await client.chat.completions.create({
+  model: "gpt-5.4",
+  messages: [{ role: "user", content: "Write a haiku about routing." }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  const delta = chunk.choices[0]?.delta?.content;
+  if (delta) process.stdout.write(delta);
+}`;
+
+  const streamingSse = `data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"role":"assistant","content":"Switch"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"content":"board"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"content":" routes"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":48,"total_tokens":60}}
+
+data: [DONE]`;
+
+  const streamingFetch = `const res = await fetch("${baseUrl}/api/chat", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: \`Bearer \${SWITCHBOARD_API_KEY}\`,
+  },
+  body: JSON.stringify({
+    modelId: "claude-sonnet-4.6",
+    messages,
+    stream: true,
+  }),
+});
+
+const reader = res.body!.getReader();
+const decoder = new TextDecoder();
+let buffer = "";
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value, { stream: true });
+  const events = buffer.split("\\n\\n");
+  buffer = events.pop() ?? "";
+  for (const evt of events) {
+    const line = evt.trim();
+    if (!line.startsWith("data:")) continue;
+    const json = line.slice(5).trim();
+    if (json === "[DONE]") return;
+    const { choices } = JSON.parse(json);
+    const delta = choices[0]?.delta?.content;
+    if (delta) appendToUI(delta);
+  }
+}`;
 
   return (
     <div className="container mx-auto px-4 flex items-start gap-12 py-12 animate-fade-in relative">
@@ -62,26 +164,10 @@ export default function Docs() {
                   <span className="text-xs font-mono px-2 py-1 rounded bg-background text-foreground shadow-sm">Node.js</span>
                   <span className="text-xs font-mono px-2 py-1 rounded text-muted-foreground">Python</span>
                 </div>
-                <button className="text-muted-foreground hover:text-foreground"><Copy className="w-4 h-4" /></button>
+                <CopyButton text={quickstartCode} />
               </div>
               <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
-                <code>{`import OpenAI from "openai";
-
-const client = new OpenAI({
-  baseURL: "${baseUrl}/api", // Note the base URL
-  apiKey: process.env.SWITCHBOARD_API_KEY,
-});
-
-async function main() {
-  const completion = await client.chat.completions.create({
-    messages: [{ role: "user", content: "Say this is a test" }],
-    model: "claude-sonnet-4.6", // Catalog id from /api/models
-  });
-
-  console.log(completion.choices[0].message.content);
-}
-
-main();`}</code>
+                <code>{quickstartCode}</code>
               </pre>
             </div>
           </section>
@@ -126,30 +212,11 @@ main();`}</code>
 
             <h3 className="text-lg font-bold mb-3">Response</h3>
             <div className="rounded-lg border border-border overflow-hidden">
-               <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
-                <code>
-{`{
-  "id": "chatcmpl-123",
-  "object": "chat.completion",
-  "created": 1677652288,
-  "model": "anthropic/claude-sonnet-4.5",
-  "system_fingerprint": "fp_44709d6fcb",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant",
-      "content": "This is a test."
-    },
-    "logprobs": null,
-    "finish_reason": "stop"
-  }],
-  "usage": {
-    "prompt_tokens": 9,
-    "completion_tokens": 12,
-    "total_tokens": 21
-  }
-}`}
-                </code>
+              <div className="flex items-center justify-end border-b border-border bg-muted/30 px-4 py-2">
+                <CopyButton text={responseJson} />
+              </div>
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{responseJson}</code>
               </pre>
             </div>
           </section>
@@ -171,26 +238,10 @@ main();`}</code>
                   <span className="text-xs font-mono px-2 py-1 rounded text-muted-foreground">Python</span>
                   <span className="text-xs font-mono px-2 py-1 rounded text-muted-foreground">cURL</span>
                 </div>
-                <button className="text-muted-foreground hover:text-foreground"><Copy className="w-4 h-4" /></button>
+                <CopyButton text={streamingNodeCode} />
               </div>
               <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
-                <code>{`import OpenAI from "openai";
-
-const client = new OpenAI({
-  baseURL: "${baseUrl}/api",
-  apiKey: process.env.SWITCHBOARD_API_KEY,
-});
-
-const stream = await client.chat.completions.create({
-  model: "gpt-5.4",
-  messages: [{ role: "user", content: "Write a haiku about routing." }],
-  stream: true,
-});
-
-for await (const chunk of stream) {
-  const delta = chunk.choices[0]?.delta?.content;
-  if (delta) process.stdout.write(delta);
-}`}</code>
+                <code>{streamingNodeCode}</code>
               </pre>
             </div>
 
@@ -201,16 +252,11 @@ for await (const chunk of stream) {
               <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground ml-1">[DONE]</code>.
             </p>
             <div className="rounded-lg border border-border overflow-hidden">
+              <div className="flex items-center justify-end border-b border-border bg-muted/30 px-4 py-2">
+                <CopyButton text={streamingSse} />
+              </div>
               <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
-                <code>{`data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"role":"assistant","content":"Switch"},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"content":"board"},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"content":" routes"},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":48,"total_tokens":60}}
-
-data: [DONE]`}</code>
+                <code>{streamingSse}</code>
               </pre>
             </div>
 
@@ -221,40 +267,11 @@ data: [DONE]`}</code>
               chat UIs that render tokens as they arrive.
             </p>
             <div className="rounded-lg border border-border overflow-hidden">
+              <div className="flex items-center justify-end border-b border-border bg-muted/30 px-4 py-2">
+                <CopyButton text={streamingFetch} />
+              </div>
               <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
-                <code>{`const res = await fetch("${baseUrl}/api/chat", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: \`Bearer \${SWITCHBOARD_API_KEY}\`,
-  },
-  body: JSON.stringify({
-    modelId: "claude-sonnet-4.6",
-    messages,
-    stream: true,
-  }),
-});
-
-const reader = res.body!.getReader();
-const decoder = new TextDecoder();
-let buffer = "";
-
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-  buffer += decoder.decode(value, { stream: true });
-  const events = buffer.split("\\n\\n");
-  buffer = events.pop() ?? "";
-  for (const evt of events) {
-    const line = evt.trim();
-    if (!line.startsWith("data:")) continue;
-    const json = line.slice(5).trim();
-    if (json === "[DONE]") return;
-    const { choices } = JSON.parse(json);
-    const delta = choices[0]?.delta?.content;
-    if (delta) appendToUI(delta);
-  }
-}`}</code>
+                <code>{streamingFetch}</code>
               </pre>
             </div>
 
