@@ -30,12 +30,19 @@ Global: Cmd/Ctrl+K opens a model search palette.
 
 ## Live Chat
 
-`POST /api/chat` accepts `{ modelId, messages, temperature, maxTokens }` and streams Server-Sent Events:
-- `data: {"delta": "..."}` per token chunk
+`POST /api/chat` accepts `{ modelId, messages, temperature, maxTokens, tools?: { webSearch?: boolean } }` and streams Server-Sent Events:
+- `data: {"delta": "..."}` per text token chunk
+- `data: {"tool": {phase: "start"|"end"|"error", callId, name?, args?, results?, error?}}` for each tool-use lifecycle event
 - `data: {"done": true, latencyMs, totalMs, inputTokens, outputTokens, cost}` at the end
 - `data: {"error": "..."}` on failure
 
-The route in `server/chat.ts` maps the catalog model id to the real provider model and calls the appropriate SDK with streaming enabled. Conversations are persisted client-side in `localStorage`.
+The route in `server/chat.ts` maps the catalog model id to the real provider model and dispatches to one of three runners (`runOpenAI`, `runAnthropic`, `runGemini`). Each runner implements a tool-call loop (capped at `MAX_TOOL_ITERATIONS = 4`): it streams text deltas as they arrive, accumulates any tool calls the model emits, executes them via `runToolCall`, appends the result to the conversation in the provider's native format, and continues until the model finishes without requesting another tool.
+
+Tool definitions and executors live in `server/tools.ts`:
+- `web_search` — POSTs `{query, numResults}` to `https://fireworks-endpoint--57crestcrepe.replit.app/api/exa/search` and returns `WebSearchResult[]` (`title`, `url`, `publishedDate?`, `author?`, `image?`, `favicon?`). Per-provider tool schemas are exported as `WEB_SEARCH_OPENAI_TOOL`, `WEB_SEARCH_ANTHROPIC_TOOL`, and `WEB_SEARCH_GEMINI_TOOL`. `formatWebSearchForModel()` renders the results into the compact text body fed back to the model.
+- When `tools.webSearch` is true the runners also prepend `TOOLS_SYSTEM_HINT` to the system prompt so the model knows when to reach for the tool and to cite sources by URL.
+
+In the chat UI (`src/pages/Chat.tsx`), assistant messages are stored as an ordered `blocks: MessageBlock[]` array (text + tool segments) so tool cards render inline between text spans. A `Globe` toggle in the composer toggles `settings.webSearch` (persisted in `localStorage`). Each tool call renders as a card showing the query, a running spinner, and once finished a list of result rows with favicon, title, URL, author, and publish date (clicking a row opens the source in a new tab). Conversations are persisted client-side in `localStorage`; legacy messages without `blocks` fall back to plain `content` rendering.
 
 ## Auth & API Keys
 

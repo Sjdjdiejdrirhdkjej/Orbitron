@@ -1,12 +1,54 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Settings2, Send, Plus, MessageSquare, Trash2, Menu, X, Loader2, ChevronDown } from "lucide-react";
+import {
+  Settings2,
+  Send,
+  Plus,
+  MessageSquare,
+  Trash2,
+  Menu,
+  X,
+  Loader2,
+  ChevronDown,
+  Globe,
+  ExternalLink,
+  AlertTriangle,
+} from "lucide-react";
 import { models } from "../data/models";
 
 type Role = "user" | "assistant";
 
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  publishedDate?: string;
+  author?: string;
+  image?: string;
+  favicon?: string;
+}
+
+export interface ToolCallBlock {
+  type: "tool";
+  callId: string;
+  name: string;
+  args: Record<string, unknown>;
+  status: "running" | "done" | "error";
+  results?: WebSearchResult[];
+  error?: string;
+}
+
+export interface TextBlock {
+  type: "text";
+  text: string;
+}
+
+export type MessageBlock = TextBlock | ToolCallBlock;
+
 interface Message {
   id: string;
   role: Role;
+  /** Ordered text + tool segments. Newer messages always set this. */
+  blocks?: MessageBlock[];
+  /** Backwards-compat plain-text body for messages saved before block support. */
   content: string;
   modelId?: string;
   latencyMs?: number;
@@ -30,6 +72,16 @@ const SETTINGS_KEY = "switchboard.chatSettings.v1";
 
 const DEFAULT_MODEL = "gpt-5.4";
 
+/** Read the displayable text from a message — works for both new (blocks) and
+ * legacy (content) messages. */
+function messagePlainText(m: Message): string {
+  if (!m.blocks) return m.content;
+  return m.blocks
+    .filter((b): b is TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+}
+
 function loadConversations(): Conversation[] {
   if (typeof window === "undefined") return [];
   try {
@@ -42,17 +94,162 @@ function loadConversations(): Conversation[] {
   }
 }
 
-function loadSettings(): { temperature: number; maxTokens: number; modelId: string } {
-  if (typeof window === "undefined") return { temperature: 0.7, maxTokens: 4096, modelId: DEFAULT_MODEL };
+interface ChatSettings {
+  temperature: number;
+  maxTokens: number;
+  modelId: string;
+  webSearch: boolean;
+}
+
+function loadSettings(): ChatSettings {
+  const defaults: ChatSettings = {
+    temperature: 0.7,
+    maxTokens: 4096,
+    modelId: DEFAULT_MODEL,
+    webSearch: false,
+  };
+  if (typeof window === "undefined") return defaults;
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) return { temperature: 0.7, maxTokens: 4096, modelId: DEFAULT_MODEL, ...JSON.parse(raw) };
+    if (raw) return { ...defaults, ...JSON.parse(raw) };
   } catch {}
-  return { temperature: 0.7, maxTokens: 4096, modelId: DEFAULT_MODEL };
+  return defaults;
 }
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
+}
+
+/**
+ * Renders an assistant or user message, expanding `blocks` (text + tool
+ * cards) when present and falling back to `content` for legacy messages.
+ */
+function MessageBody({
+  msg,
+  isLastStreaming,
+}: {
+  msg: Message;
+  isLastStreaming: boolean;
+}) {
+  // Legacy messages without blocks — render plain content.
+  if (!msg.blocks || msg.blocks.length === 0) {
+    return (
+      <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+        {msg.content}
+        {isLastStreaming && !msg.content && (
+          <Loader2 className="inline w-4 h-4 animate-spin text-muted-foreground" />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {msg.blocks.map((block, i) => {
+        if (block.type === "text") {
+          if (!block.text && !(isLastStreaming && i === msg.blocks!.length - 1)) {
+            return null;
+          }
+          return (
+            <div
+              key={i}
+              className="text-sm leading-relaxed whitespace-pre-wrap break-words"
+            >
+              {block.text}
+              {isLastStreaming && i === msg.blocks!.length - 1 && !block.text && (
+                <Loader2 className="inline w-4 h-4 animate-spin text-muted-foreground" />
+              )}
+            </div>
+          );
+        }
+        return <ToolCallCard key={block.callId || i} block={block} />;
+      })}
+    </div>
+  );
+}
+
+function ToolCallCard({ block }: { block: ToolCallBlock }) {
+  const query = String((block.args as { query?: string })?.query ?? "");
+  const headerLabel =
+    block.name === "web_search" ? "Web search" : block.name;
+
+  return (
+    <div className="border border-border rounded-lg overflow-hidden bg-muted/20">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+        {block.status === "running" ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+        ) : block.status === "error" ? (
+          <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
+        ) : (
+          <Globe className="w-3.5 h-3.5 text-primary" />
+        )}
+        <span className="font-mono text-xs font-bold uppercase tracking-wide text-muted-foreground">
+          {headerLabel}
+        </span>
+        {query && (
+          <span className="text-xs text-foreground truncate min-w-0">
+            "{query}"
+          </span>
+        )}
+        {block.status === "done" && block.results && (
+          <span className="ml-auto text-xs font-mono text-muted-foreground shrink-0">
+            {block.results.length} result{block.results.length === 1 ? "" : "s"}
+          </span>
+        )}
+      </div>
+
+      {block.status === "error" && block.error && (
+        <div className="px-3 py-2 text-xs text-destructive font-mono">
+          {block.error}
+        </div>
+      )}
+
+      {block.status === "done" && block.results && block.results.length > 0 && (
+        <ul className="divide-y divide-border">
+          {block.results.map((r, idx) => (
+            <li key={`${r.url}-${idx}`} className="px-3 py-2">
+              <a
+                href={r.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-start gap-2 group"
+              >
+                {r.favicon ? (
+                  <img
+                    src={r.favicon}
+                    alt=""
+                    className="w-4 h-4 mt-0.5 rounded-sm shrink-0 object-contain"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                    }}
+                  />
+                ) : (
+                  <ExternalLink className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate group-hover:text-primary transition-colors">
+                    {r.title || r.url}
+                  </div>
+                  <div className="text-xs font-mono text-muted-foreground truncate">
+                    {r.url}
+                  </div>
+                  {(r.publishedDate || r.author) && (
+                    <div className="text-[11px] font-mono text-muted-foreground mt-0.5">
+                      {r.author && <span>{r.author}</span>}
+                      {r.author && r.publishedDate && <span> · </span>}
+                      {r.publishedDate && (
+                        <span>{r.publishedDate.slice(0, 10)}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function formatTimeBucket(ts: number): string {
@@ -169,12 +366,18 @@ export default function Chat() {
       setActiveId(conv.id);
     }
 
-    const userMsg: Message = { id: uid(), role: "user", content: text };
+    const userMsg: Message = {
+      id: uid(),
+      role: "user",
+      content: text,
+      blocks: [{ type: "text", text }],
+    };
     const assistantId = uid();
     const assistantMsg: Message = {
       id: assistantId,
       role: "assistant",
       content: "",
+      blocks: [],
       modelId: conv.modelId,
     };
 
@@ -197,6 +400,20 @@ export default function Chat() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    /** Mutate the in-flight assistant message via a block-level updater. */
+    const updateAssistant = (updater: (m: Message) => Message) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId
+            ? {
+                ...c,
+                messages: c.messages.map((m) => (m.id === assistantId ? updater(m) : m)),
+              }
+            : c
+        )
+      );
+    };
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -206,8 +423,12 @@ export default function Chat() {
           modelId: conv.modelId,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
+          tools: { webSearch: settings.webSearch },
           messages: [
-            ...conv.messages.map((m) => ({ role: m.role, content: m.content })),
+            ...conv.messages.map((m) => ({
+              role: m.role,
+              content: messagePlainText(m),
+            })),
             { role: "user", content: text },
           ],
         }),
@@ -236,40 +457,66 @@ export default function Chat() {
           try {
             const payload = JSON.parse(json);
             if (payload.delta) {
-              setConversations((prev) =>
-                prev.map((c) =>
-                  c.id === convId
-                    ? {
-                        ...c,
-                        messages: c.messages.map((m) =>
-                          m.id === assistantId ? { ...m, content: m.content + payload.delta } : m
-                        ),
-                      }
-                    : c
-                )
-              );
+              // Append to the last text block, or open a new one if the
+              // current tail is a tool block (model resumed talking after
+              // a tool call).
+              updateAssistant((m) => {
+                const blocks = [...(m.blocks ?? [])];
+                const last = blocks[blocks.length - 1];
+                if (last && last.type === "text") {
+                  blocks[blocks.length - 1] = { ...last, text: last.text + payload.delta };
+                } else {
+                  blocks.push({ type: "text", text: payload.delta });
+                }
+                return { ...m, blocks, content: m.content + payload.delta };
+              });
+            } else if (payload.tool) {
+              const t = payload.tool as {
+                phase: "start" | "end" | "error";
+                callId: string;
+                name?: string;
+                args?: Record<string, unknown>;
+                results?: WebSearchResult[];
+                error?: string;
+              };
+              if (t.phase === "start") {
+                updateAssistant((m) => ({
+                  ...m,
+                  blocks: [
+                    ...(m.blocks ?? []),
+                    {
+                      type: "tool",
+                      callId: t.callId,
+                      name: t.name ?? "tool",
+                      args: t.args ?? {},
+                      status: "running",
+                    },
+                  ],
+                }));
+              } else {
+                updateAssistant((m) => ({
+                  ...m,
+                  blocks: (m.blocks ?? []).map((b) =>
+                    b.type === "tool" && b.callId === t.callId
+                      ? {
+                          ...b,
+                          status: t.phase === "end" ? "done" : "error",
+                          results: t.results ?? b.results,
+                          error: t.error ?? b.error,
+                        }
+                      : b
+                  ),
+                }));
+              }
             } else if (payload.done) {
-              setConversations((prev) =>
-                prev.map((c) =>
-                  c.id === convId
-                    ? {
-                        ...c,
-                        messages: c.messages.map((m) =>
-                          m.id === assistantId
-                            ? {
-                                ...m,
-                                latencyMs: payload.latencyMs,
-                                totalMs: payload.totalMs,
-                                cost: payload.cost,
-                                inputTokens: payload.inputTokens,
-                                outputTokens: payload.outputTokens,
-                              }
-                            : m
-                        ),
-                      }
-                    : c
-                )
-              );
+              updateAssistant((m) => ({
+                ...m,
+                latencyMs: payload.latencyMs,
+                totalMs: payload.totalMs,
+                cost: payload.cost,
+                inputTokens: payload.inputTokens,
+                outputTokens: payload.outputTokens,
+              }));
             } else if (payload.error) {
               throw new Error(payload.error);
             }
@@ -281,20 +528,17 @@ export default function Chat() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Request failed";
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === convId
-            ? {
-                ...c,
-                messages: c.messages.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content || `Error: ${message}`, error: true }
-                    : m
-                ),
-              }
-            : c
-        )
-      );
+      updateAssistant((m) => {
+        const hasContent = m.content || (m.blocks ?? []).some((b) => b.type === "text" && b.text);
+        const errorText = `Error: ${message}`;
+        if (hasContent) return { ...m, error: true };
+        return {
+          ...m,
+          content: errorText,
+          blocks: [{ type: "text", text: errorText }],
+          error: true,
+        };
+      });
     } finally {
       setStreaming(false);
       abortRef.current = null;
@@ -555,15 +799,14 @@ export default function Chat() {
                     </span>
                   )}
                 </div>
-                <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                  {msg.content}
-                  {streaming &&
+                <MessageBody
+                  msg={msg}
+                  isLastStreaming={
+                    streaming &&
                     msg.role === "assistant" &&
-                    msg.id === active?.messages[active.messages.length - 1]?.id &&
-                    !msg.content && (
-                      <Loader2 className="inline w-4 h-4 animate-spin text-muted-foreground" />
-                    )}
-                </div>
+                    msg.id === active?.messages[active.messages.length - 1]?.id
+                  }
+                />
               </div>
             </div>
           ))}
@@ -582,9 +825,31 @@ export default function Chat() {
               placeholder={`Message ${activeModel.name}...`}
               disabled={streaming}
             />
-            <div className="absolute bottom-2 left-2 right-2 flex justify-between items-center pointer-events-none">
-              <div className="text-xs font-mono text-muted-foreground px-2 hidden sm:block">
-                Enter ↵ to send · Shift + Enter for newline
+            <div className="absolute bottom-2 left-2 right-2 flex justify-between items-center pointer-events-none gap-2">
+              <div className="flex items-center gap-2 pointer-events-auto">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSettings((s) => ({ ...s, webSearch: !s.webSearch }))
+                  }
+                  aria-pressed={settings.webSearch}
+                  title={
+                    settings.webSearch
+                      ? "Web search enabled — the model can fetch live results"
+                      : "Enable web search so the model can fetch live results"
+                  }
+                  className={`flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded-md border transition-colors ${
+                    settings.webSearch
+                      ? "border-primary/50 bg-primary/10 text-primary"
+                      : "border-border bg-transparent text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span className="hidden xs:inline">Web search</span>
+                </button>
+                <div className="text-xs font-mono text-muted-foreground px-1 hidden lg:block">
+                  Enter ↵ to send · Shift + Enter for newline
+                </div>
               </div>
               <div className="ml-auto flex items-center gap-2 pointer-events-auto">
                 {streaming ? (
