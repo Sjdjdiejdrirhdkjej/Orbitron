@@ -145,6 +145,119 @@ main();`}</code>
               </pre>
             </div>
           </section>
+
+          <section id="streaming" className="mb-16">
+            <h2 className="text-2xl font-bold mb-4">Streaming Responses</h2>
+            <p className="text-muted-foreground mb-6 text-sm leading-relaxed">
+              Pass <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">stream: true</code> to receive
+              tokens as they're generated using Server-Sent Events. Streaming reduces time-to-first-token from seconds to
+              milliseconds and is the recommended pattern for chat UIs. Works identically across every model in the catalog —
+              Switchboard normalizes provider-specific protocols into a single OpenAI-compatible SSE format.
+            </p>
+
+            <h3 className="text-lg font-bold mb-3">Request</h3>
+            <div className="rounded-lg border border-border overflow-hidden my-6">
+              <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
+                <div className="flex gap-2">
+                  <span className="text-xs font-mono px-2 py-1 rounded bg-background text-foreground shadow-sm">Node.js</span>
+                  <span className="text-xs font-mono px-2 py-1 rounded text-muted-foreground">Python</span>
+                  <span className="text-xs font-mono px-2 py-1 rounded text-muted-foreground">cURL</span>
+                </div>
+                <button className="text-muted-foreground hover:text-foreground"><Copy className="w-4 h-4" /></button>
+              </div>
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{`import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "https://api.switchboard.dev/v1",
+  apiKey: process.env.SWITCHBOARD_API_KEY,
+});
+
+const stream = await client.chat.completions.create({
+  model: "openai/gpt-5.4",
+  messages: [{ role: "user", content: "Write a haiku about routing." }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  const delta = chunk.choices[0]?.delta?.content;
+  if (delta) process.stdout.write(delta);
+}`}</code>
+              </pre>
+            </div>
+
+            <h3 className="text-lg font-bold mb-3">Response Format</h3>
+            <p className="text-muted-foreground mb-4 text-sm leading-relaxed">
+              The server streams a sequence of <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">data:</code> events.
+              Each event is a JSON object with one or more chunks of generated content. The final event is the literal string
+              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground ml-1">[DONE]</code>.
+            </p>
+            <div className="rounded-lg border border-border overflow-hidden">
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{`data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"role":"assistant","content":"Switch"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"content":"board"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"openai/gpt-5.4","choices":[{"index":0,"delta":{"content":" routes"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":48,"total_tokens":60}}
+
+data: [DONE]`}</code>
+              </pre>
+            </div>
+
+            <h3 className="text-lg font-bold mt-8 mb-3">Browser (Fetch + SSE)</h3>
+            <p className="text-muted-foreground mb-4 text-sm leading-relaxed">
+              Stream directly from the browser using <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">fetch</code> and a
+              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground ml-1">ReadableStream</code> reader. Recommended for
+              chat UIs that render tokens as they arrive.
+            </p>
+            <div className="rounded-lg border border-border overflow-hidden">
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{`const res = await fetch("https://api.switchboard.dev/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: \`Bearer \${SWITCHBOARD_API_KEY}\`,
+  },
+  body: JSON.stringify({
+    model: "anthropic/claude-sonnet-4.6",
+    messages,
+    stream: true,
+  }),
+});
+
+const reader = res.body!.getReader();
+const decoder = new TextDecoder();
+let buffer = "";
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value, { stream: true });
+  const events = buffer.split("\\n\\n");
+  buffer = events.pop() ?? "";
+  for (const evt of events) {
+    const line = evt.trim();
+    if (!line.startsWith("data:")) continue;
+    const json = line.slice(5).trim();
+    if (json === "[DONE]") return;
+    const { choices } = JSON.parse(json);
+    const delta = choices[0]?.delta?.content;
+    if (delta) appendToUI(delta);
+  }
+}`}</code>
+              </pre>
+            </div>
+
+            <h3 className="text-lg font-bold mt-8 mb-3">Notes</h3>
+            <ul className="space-y-2 text-sm text-muted-foreground list-disc pl-5">
+              <li>Set <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">stream_options: {`{ include_usage: true }`}</code> to receive token counts in the final chunk.</li>
+              <li>Reasoning models (GPT-5 series, o-series) emit a "thinking" pause before the first content delta. Latency-to-first-token can be 2–10s.</li>
+              <li>Disable proxy buffering with <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">X-Accel-Buffering: no</code> if you're behind nginx.</li>
+              <li>Streamed responses are billed identically to non-streamed ones — per input/output token at the model's listed rate.</li>
+            </ul>
+          </section>
         </div>
       </div>
     </div>
