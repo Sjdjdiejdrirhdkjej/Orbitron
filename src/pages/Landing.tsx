@@ -75,7 +75,7 @@ export default function Landing() {
 {'  '}apiKey: process.env.SWITCHBOARD_API_KEY,{`\n`}
 {`}`});{`\n\n`}
 <span className="text-blue-400">const</span> response = <span className="text-blue-400">await</span> client.chat.completions.create({`{`}{`\n`}
-{'  '}model: <span className="text-green-400">"anthropic/claude-4.5-sonnet"</span>, <span className="text-muted-foreground/50">// Just change this</span>{`\n`}
+{'  '}model: <span className="text-green-400">"anthropic/claude-sonnet-4.5"</span>, <span className="text-muted-foreground/50">// Just change this</span>{`\n`}
 {'  '}messages: [{`\n`}
 {'    '}{`{`} role: <span className="text-green-400">"user"</span>, content: <span className="text-green-400">"Explain quantum gravity"</span> {`}`}{`\n`}
 {'  '}],{`\n`}

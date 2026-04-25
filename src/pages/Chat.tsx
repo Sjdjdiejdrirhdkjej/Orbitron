@@ -28,7 +28,7 @@ interface Conversation {
 const STORAGE_KEY = "switchboard.conversations.v1";
 const SETTINGS_KEY = "switchboard.chatSettings.v1";
 
-const DEFAULT_MODEL = "claude-4.5-sonnet";
+const DEFAULT_MODEL = "claude-sonnet-4.5";
 
 function loadConversations(): Conversation[] {
   if (typeof window === "undefined") return [];

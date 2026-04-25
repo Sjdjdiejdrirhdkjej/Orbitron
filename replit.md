@@ -31,17 +31,22 @@ The route in `server/chat.ts` maps the catalog model id to the real provider mod
 
 ### Catalog → real model mapping
 
+Every catalog entry maps 1:1 to a real, currently-supported model on the AI Integrations proxy.
+
 | Catalog id | Real model | Provider |
 |---|---|---|
-| `gpt-5`, `gpt-5-turbo` | `gpt-5` | OpenAI |
+| `gpt-5.1` | `gpt-5.1` | OpenAI |
+| `gpt-5` | `gpt-5` | OpenAI |
 | `gpt-5-mini` | `gpt-5-mini` | OpenAI |
 | `gpt-5-nano` | `gpt-5-nano` | OpenAI |
-| `o4`, `o4-mini` | `o4-mini` | OpenAI |
-| `claude-4.5-opus`, `claude-4-opus` | `claude-opus-4-5` | Anthropic |
-| `claude-4.5-sonnet` | `claude-sonnet-4-5` | Anthropic |
-| `claude-4.5-haiku` | `claude-haiku-4-5` | Anthropic |
-| `gemini-2.5-pro`, `gemini-2.5-thinking` | `gemini-2.5-pro` | Google |
-| `gemini-2.5-flash`, `gemini-2.5-flash-lite` | `gemini-2.5-flash` | Google |
+| `o4-mini` | `o4-mini` | OpenAI |
+| `o3` | `o3` | OpenAI |
+| `claude-opus-4.5` | `claude-opus-4-5` | Anthropic |
+| `claude-sonnet-4.5` | `claude-sonnet-4-5` | Anthropic |
+| `claude-haiku-4.5` | `claude-haiku-4-5` | Anthropic |
+| `claude-opus-4.1` | `claude-opus-4-1` | Anthropic |
+| `gemini-2.5-pro` | `gemini-2.5-pro` | Google |
+| `gemini-2.5-flash` | `gemini-2.5-flash` | Google |
 
 ## File Layout
 

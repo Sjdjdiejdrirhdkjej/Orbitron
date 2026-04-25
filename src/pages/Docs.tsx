@@ -67,7 +67,7 @@ const client = new OpenAI({
 async function main() {
   const completion = await client.chat.completions.create({
     messages: [{ role: "user", content: "Say this is a test" }],
-    model: "anthropic/claude-4.5-sonnet", // Use the provider/model format
+    model: "anthropic/claude-sonnet-4.5", // Use the provider/model format
   });
 
   console.log(completion.choices[0].message.content);
@@ -124,7 +124,7 @@ main();`}</code>
   "id": "chatcmpl-123",
   "object": "chat.completion",
   "created": 1677652288,
-  "model": "anthropic/claude-4.5-sonnet",
+  "model": "anthropic/claude-sonnet-4.5",
   "system_fingerprint": "fp_44709d6fcb",
   "choices": [{
     "index": 0,

@@ -23,26 +23,24 @@ const gemini = new GoogleGenAI({
 });
 
 const openAIMap: Record<string, string> = {
+  "gpt-5.1": "gpt-5.1",
   "gpt-5": "gpt-5",
-  "gpt-5-turbo": "gpt-5",
   "gpt-5-mini": "gpt-5-mini",
   "gpt-5-nano": "gpt-5-nano",
-  "o4": "o4-mini",
   "o4-mini": "o4-mini",
+  "o3": "o3",
 };
 
 const anthropicMap: Record<string, string> = {
-  "claude-4.5-opus": "claude-opus-4-5",
-  "claude-4.5-sonnet": "claude-sonnet-4-5",
-  "claude-4.5-haiku": "claude-haiku-4-5",
-  "claude-4-opus": "claude-opus-4-5",
+  "claude-opus-4.5": "claude-opus-4-5",
+  "claude-sonnet-4.5": "claude-sonnet-4-5",
+  "claude-haiku-4.5": "claude-haiku-4-5",
+  "claude-opus-4.1": "claude-opus-4-1",
 };
 
 const geminiMap: Record<string, string> = {
   "gemini-2.5-pro": "gemini-2.5-pro",
   "gemini-2.5-flash": "gemini-2.5-flash",
-  "gemini-2.5-flash-lite": "gemini-2.5-flash",
-  "gemini-2.5-thinking": "gemini-2.5-pro",
 };
 
 interface ChatMessage {
@@ -150,9 +148,6 @@ export function registerChatRoutes(app: Express): void {
           maxOutputTokens: maxTokens ?? 4096,
         };
         if (systemMessages) config.systemInstruction = systemMessages;
-        if (modelId === "gemini-2.5-thinking") {
-          config.thinkingConfig = { thinkingBudget: -1, includeThoughts: false };
-        }
         const stream = await gemini.models.generateContentStream({
           model: realModel,
           contents,
