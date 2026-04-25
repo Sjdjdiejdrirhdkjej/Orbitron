@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, ExternalLink, Terminal, Code2, Cpu, Copy, Check } from "lucide-react";
+import { ArrowLeft, Copy, Check } from "lucide-react";
 import { models } from "../data/models";
 
 export default function ModelDetail() {
@@ -9,18 +9,18 @@ export default function ModelDetail() {
   const [activeTab, setActiveTab] = useState("overview");
   const [codeLang, setCodeLang] = useState("typescript");
   const [copied, setCopied] = useState(false);
+  const [baseUrl, setBaseUrl] = useState("https://your-deployment.replit.app");
 
-  const handleCopy = () => {
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  useEffect(() => {
+    if (typeof window !== "undefined") setBaseUrl(window.location.origin);
+  }, []);
 
   const codeSnippets: Record<string, string> = {
     typescript: `import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "https://api.switchboard.dev/v1",
-  apiKey: "YOUR_SWITCHBOARD_API_KEY",
+  baseURL: "${baseUrl}/api",
+  apiKey: process.env.SWITCHBOARD_API_KEY, // Generate at /keys
 });
 
 const response = await client.chat.completions.create({
@@ -30,10 +30,11 @@ const response = await client.chat.completions.create({
 
 console.log(response.choices[0].message.content);`,
     python: `from openai import OpenAI
+import os
 
 client = OpenAI(
-    base_url="https://api.switchboard.dev/v1",
-    api_key="your-api-key"
+    base_url="${baseUrl}/api",
+    api_key=os.environ["SWITCHBOARD_API_KEY"],  # Generate at /keys
 )
 
 response = client.chat.completions.create(
@@ -42,13 +43,23 @@ response = client.chat.completions.create(
 )
 
 print(response.choices[0].message.content)`,
-    curl: `curl https://api.switchboard.dev/v1/chat/completions \\
+    curl: `curl ${baseUrl}/api/chat \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer YOUR_SWITCHBOARD_API_KEY" \\
+  -H "Authorization: Bearer $SWITCHBOARD_API_KEY" \\
   -d '{
-    "model": "${model.id}",
+    "modelId": "${model.id}",
     "messages": [{"role": "user", "content": "Hello!"}]
-  }'`
+  }'`,
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(codeSnippets[codeLang]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
   };
 
   return (

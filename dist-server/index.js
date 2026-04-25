@@ -219,6 +219,374 @@ var models = [
   }
 ];
 
+// server/auth.ts
+import bcrypt from "bcryptjs";
+import { randomBytes, createHash } from "node:crypto";
+
+// server/db.ts
+import pg from "pg";
+var { Pool } = pg;
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is not set. Provision a database before starting the server.");
+}
+var pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+});
+pool.on("error", (err) => {
+  console.error("Postgres pool error:", err);
+});
+async function query(text, params) {
+  return pool.query(text, params);
+}
+async function ensureSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email TEXT UNIQUE NOT NULL,
+      name TEXT,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at);
+
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      prefix TEXT NOT NULL,
+      lookup_hash TEXT NOT NULL UNIQUE,
+      monthly_cap_cents INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_used_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS api_keys_user_id_idx ON api_keys(user_id);
+  `);
+}
+async function purgeExpiredSessions() {
+  try {
+    await pool.query("DELETE FROM sessions WHERE expires_at < NOW()");
+  } catch (err) {
+    console.error("purgeExpiredSessions failed:", err);
+  }
+}
+
+// server/auth.ts
+var SESSION_COOKIE = "sb_session";
+var SESSION_TTL_MS = 1e3 * 60 * 60 * 24 * 30;
+var KEY_PREFIX = "sk-sb-v1-";
+function parseCookies(header) {
+  if (!header) return {};
+  const out = {};
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const k = part.slice(0, idx).trim();
+    const v = part.slice(idx + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  }
+  return out;
+}
+function setSessionCookie(res, token, expiresAt) {
+  const isProd = process.env.NODE_ENV === "production";
+  const parts = [
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Expires=${expiresAt.toUTCString()}`
+  ];
+  if (isProd) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+function clearSessionCookie(res) {
+  const isProd = process.env.NODE_ENV === "production";
+  const parts = [
+    `${SESSION_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+  ];
+  if (isProd) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+function publicUser(u) {
+  return { id: u.id, email: u.email, name: u.name };
+}
+async function getSessionUser(token) {
+  if (!token) return null;
+  const result = await query(
+    `SELECT u.id, u.email, u.name, u.password_hash, u.created_at, s.expires_at
+       FROM sessions s
+       JOIN users u ON u.id = s.user_id
+      WHERE s.token = $1`,
+    [token]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    await query("DELETE FROM sessions WHERE token = $1", [token]);
+    return null;
+  }
+  return row;
+}
+function lookupHash(secret) {
+  return createHash("sha256").update(secret).digest("hex");
+}
+function generateApiKey() {
+  const raw = randomBytes(32).toString("base64url");
+  const full = `${KEY_PREFIX}${raw}`;
+  const prefix = full.slice(0, KEY_PREFIX.length + 6);
+  return { full, prefix, lookup: lookupHash(full) };
+}
+async function getUserFromBearer(token) {
+  if (!token.startsWith(KEY_PREFIX)) return null;
+  const lookup = lookupHash(token);
+  const result = await query(
+    `SELECT u.id, u.email, u.name, u.password_hash, u.created_at,
+            k.id AS key_id, k.revoked_at
+       FROM api_keys k
+       JOIN users u ON u.id = k.user_id
+      WHERE k.lookup_hash = $1`,
+    [lookup]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  if (row.revoked_at) return null;
+  query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1", [row.key_id]).catch(
+    (err) => console.error("Failed to update last_used_at:", err)
+  );
+  return {
+    user: {
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      password_hash: row.password_hash,
+      created_at: row.created_at
+    },
+    keyId: row.key_id
+  };
+}
+async function resolveAuth(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
+    const token = authHeader.slice(7).trim();
+    if (token) {
+      const result = await getUserFromBearer(token);
+      if (result) {
+        return {
+          user: publicUser(result.user),
+          via: "api_key",
+          apiKeyId: result.keyId
+        };
+      }
+      return null;
+    }
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionToken = cookies[SESSION_COOKIE];
+  if (sessionToken) {
+    const user = await getSessionUser(sessionToken);
+    if (user) {
+      return { user: publicUser(user), via: "session" };
+    }
+  }
+  return null;
+}
+async function requireAuth(req, res, next) {
+  const ctx = await resolveAuth(req);
+  if (!ctx) {
+    return res.status(401).json({
+      error: {
+        message: "Authentication required. Pass a session cookie or 'Authorization: Bearer <api key>' header. Generate a key at /keys.",
+        type: "unauthorized"
+      }
+    });
+  }
+  req.auth = ctx;
+  next();
+}
+async function requireSession(req, res, next) {
+  const ctx = await resolveAuth(req);
+  if (!ctx || ctx.via !== "session") {
+    return res.status(401).json({
+      error: { message: "You must be signed in.", type: "unauthorized" }
+    });
+  }
+  req.auth = ctx;
+  next();
+}
+var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function registerAuthRoutes(app2) {
+  app2.post("/api/auth/signup", async (req, res) => {
+    try {
+      const { email, password, name } = req.body || {};
+      if (!email || typeof email !== "string" || !EMAIL_RE.test(email)) {
+        return res.status(400).json({ error: { message: "A valid email is required." } });
+      }
+      if (!password || typeof password !== "string" || password.length < 8) {
+        return res.status(400).json({ error: { message: "Password must be at least 8 characters." } });
+      }
+      const cleanEmail = email.trim().toLowerCase();
+      const cleanName = typeof name === "string" ? name.trim().slice(0, 120) || null : null;
+      const existing = await query("SELECT id FROM users WHERE email = $1", [cleanEmail]);
+      if (existing.rowCount && existing.rowCount > 0) {
+        return res.status(409).json({ error: { message: "An account with that email already exists." } });
+      }
+      const hash = await bcrypt.hash(password, 12);
+      const result = await query(
+        `INSERT INTO users (email, name, password_hash)
+         VALUES ($1, $2, $3)
+         RETURNING id, email, name, password_hash, created_at`,
+        [cleanEmail, cleanName, hash]
+      );
+      const user = result.rows[0];
+      const token = randomBytes(32).toString("base64url");
+      const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+      await query("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)", [
+        token,
+        user.id,
+        expiresAt
+      ]);
+      setSessionCookie(res, token, expiresAt);
+      res.status(201).json({ user: publicUser(user) });
+    } catch (err) {
+      console.error("signup error:", err);
+      res.status(500).json({ error: { message: "Failed to create account." } });
+    }
+  });
+  app2.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = req.body || {};
+      if (!email || !password) {
+        return res.status(400).json({ error: { message: "Email and password required." } });
+      }
+      const cleanEmail = String(email).trim().toLowerCase();
+      const result = await query(
+        "SELECT id, email, name, password_hash, created_at FROM users WHERE email = $1",
+        [cleanEmail]
+      );
+      const user = result.rows[0];
+      const ok = user ? await bcrypt.compare(password, user.password_hash) : await bcrypt.compare(password, "$2a$12$invalidhashinvalidhashinvalidhashinvalidhashinvalidhash");
+      if (!user || !ok) {
+        return res.status(401).json({ error: { message: "Invalid email or password." } });
+      }
+      const token = randomBytes(32).toString("base64url");
+      const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+      await query("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)", [
+        token,
+        user.id,
+        expiresAt
+      ]);
+      setSessionCookie(res, token, expiresAt);
+      res.json({ user: publicUser(user) });
+    } catch (err) {
+      console.error("login error:", err);
+      res.status(500).json({ error: { message: "Failed to sign in." } });
+    }
+  });
+  app2.post("/api/auth/logout", async (req, res) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const token = cookies[SESSION_COOKIE];
+    if (token) {
+      await query("DELETE FROM sessions WHERE token = $1", [token]).catch(() => void 0);
+    }
+    clearSessionCookie(res);
+    res.json({ ok: true });
+  });
+  app2.get("/api/auth/me", async (req, res) => {
+    const ctx = await resolveAuth(req);
+    if (!ctx || ctx.via !== "session") {
+      return res.status(401).json({ error: { message: "Not signed in." } });
+    }
+    res.json({ user: ctx.user });
+  });
+}
+function registerKeyRoutes(app2) {
+  app2.get("/api/keys", requireSession, async (req, res) => {
+    const userId = req.auth.user.id;
+    const result = await query(
+      `SELECT id, user_id, name, prefix, monthly_cap_cents, created_at, last_used_at, revoked_at
+         FROM api_keys
+        WHERE user_id = $1
+        ORDER BY created_at DESC`,
+      [userId]
+    );
+    res.json({
+      data: result.rows.map((k) => ({
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        monthlyCapCents: k.monthly_cap_cents,
+        createdAt: k.created_at,
+        lastUsedAt: k.last_used_at,
+        revokedAt: k.revoked_at
+      }))
+    });
+  });
+  app2.post("/api/keys", requireSession, async (req, res) => {
+    const userId = req.auth.user.id;
+    const { name, monthlyCapCents } = req.body || {};
+    const cleanName = typeof name === "string" ? name.trim().slice(0, 80) : "";
+    if (!cleanName) {
+      return res.status(400).json({ error: { message: "Name is required." } });
+    }
+    let cap = null;
+    if (monthlyCapCents !== void 0 && monthlyCapCents !== null) {
+      const n = Number(monthlyCapCents);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: { message: "Cap must be a positive number." } });
+      }
+      cap = Math.floor(n);
+    }
+    const { full, prefix, lookup } = generateApiKey();
+    const result = await query(
+      `INSERT INTO api_keys (user_id, name, prefix, lookup_hash, monthly_cap_cents)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, user_id, name, prefix, monthly_cap_cents, created_at, last_used_at, revoked_at`,
+      [userId, cleanName, prefix, lookup, cap]
+    );
+    const k = result.rows[0];
+    res.status(201).json({
+      key: full,
+      // only returned this one time
+      record: {
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        monthlyCapCents: k.monthly_cap_cents,
+        createdAt: k.created_at,
+        lastUsedAt: k.last_used_at,
+        revokedAt: k.revoked_at
+      }
+    });
+  });
+  app2.delete("/api/keys/:id", requireSession, async (req, res) => {
+    const userId = req.auth.user.id;
+    const { id } = req.params;
+    const result = await query(
+      `UPDATE api_keys
+          SET revoked_at = NOW()
+        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [id, userId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Key not found." } });
+    }
+    res.json({ ok: true });
+  });
+}
+
 // server/chat.ts
 var openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -262,7 +630,7 @@ function approxTokens(text) {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 function registerChatRoutes(app2) {
-  app2.post("/api/chat", async (req, res) => {
+  app2.post("/api/chat", requireAuth, async (req, res) => {
     const { modelId, messages, temperature, maxTokens } = req.body || {};
     if (!modelId || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: "modelId and messages are required" });
@@ -505,7 +873,7 @@ function registerApiRoutes(app2) {
       description: model.description
     });
   });
-  app2.post("/api/images", async (req, res) => {
+  app2.post("/api/images", requireAuth, async (req, res) => {
     const { prompt, size = "1024x1024", n = 1 } = req.body || {};
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: { message: "prompt is required" } });
@@ -541,11 +909,18 @@ function registerApiRoutes(app2) {
 // server/index.ts
 var app = express();
 app.use(express.json({ limit: "10mb" }));
+registerAuthRoutes(app);
+registerKeyRoutes(app);
 registerChatRoutes(app);
 registerApiRoutes(app);
 var isProduction = process.env.NODE_ENV === "production";
 var PORT = Number(process.env.PORT) || 5e3;
 async function start() {
+  await ensureSchema();
+  await purgeExpiredSessions();
+  setInterval(() => {
+    void purgeExpiredSessions();
+  }, 6 * 60 * 60 * 1e3).unref?.();
   if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true, allowedHosts: true },

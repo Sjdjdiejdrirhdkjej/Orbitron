@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { models as catalog, providers } from "../src/data/models";
+import { requireAuth } from "./auth";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -179,7 +180,7 @@ export function registerApiRoutes(app: Express): void {
   // POST /api/images — generate an image with OpenAI gpt-image-1
   // Body: { prompt: string, size?: "1024x1024"|"1024x1536"|"1536x1024"|"auto", n?: number }
   // Returns: { data: [{ b64_json, revised_prompt }], model, latencyMs }
-  app.post("/api/images", async (req: Request, res: Response) => {
+  app.post("/api/images", requireAuth, async (req: Request, res: Response) => {
     const { prompt, size = "1024x1024", n = 1 } = (req.body || {}) as ImageBody;
 
     if (!prompt || typeof prompt !== "string") {

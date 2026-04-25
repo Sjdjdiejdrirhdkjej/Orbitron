@@ -15,7 +15,7 @@ export default function Docs() {
 
 const client = new OpenAI({
   baseURL: "${baseUrl}/api", // Note the base URL
-  apiKey: "YOUR_SWITCHBOARD_API_KEY",
+  apiKey: process.env.SWITCHBOARD_API_KEY, // Generate at /keys
 });
 
 async function main() {
@@ -55,7 +55,7 @@ main();`;
 
 const client = new OpenAI({
   baseURL: "${baseUrl}/api",
-  apiKey: "YOUR_SWITCHBOARD_API_KEY",
+  apiKey: process.env.SWITCHBOARD_API_KEY,
 });
 
 const stream = await client.chat.completions.create({
@@ -83,7 +83,7 @@ data: [DONE]`;
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    Authorization: "Bearer YOUR_SWITCHBOARD_API_KEY",
+    Authorization: \`Bearer \${process.env.SWITCHBOARD_API_KEY}\`,
   },
   body: JSON.stringify({
     modelId: "claude-sonnet-4.6",
@@ -151,6 +151,46 @@ while (true) {
           <p className="text-xl text-muted-foreground font-mono text-sm leading-relaxed mb-12">
             Switchboard provides an OpenAI-compatible API to interact with every frontier model from OpenAI, Anthropic, and Google.
           </p>
+
+          <section id="auth" className="mb-16">
+            <h2 className="text-2xl font-bold mb-4">Authentication</h2>
+            <p className="text-muted-foreground mb-4 text-sm leading-relaxed">
+              Every Switchboard request must include a personal API key in the
+              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground mx-1">
+                Authorization
+              </code>
+              header.
+            </p>
+            <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground mb-4">
+              <li>
+                Create a free account at <Link to="/signup" className="text-foreground underline">/signup</Link>.
+              </li>
+              <li>
+                Open <Link to="/keys" className="text-foreground underline">the dashboard</Link> and click
+                <span className="text-foreground"> Create Key</span>.
+              </li>
+              <li>
+                Copy the secret <span className="text-foreground">once</span> — it begins with
+                <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground ml-1">
+                  sk-sb-v1-
+                </code>
+                — and store it as an environment variable.
+              </li>
+            </ol>
+            <div className="rounded-lg border border-border overflow-hidden my-6">
+              <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
+                <span className="text-xs font-mono text-muted-foreground">HTTP request</span>
+              </div>
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{`Authorization: Bearer sk-sb-v1-…`}</code>
+              </pre>
+            </div>
+            <p className="text-muted-foreground text-sm leading-relaxed">
+              Treat your key like a password. Rotate or revoke it any time from
+              {" "}<Link to="/keys" className="text-foreground underline">the dashboard</Link>.
+              Revoked keys stop working immediately.
+            </p>
+          </section>
 
           <section id="quickstart" className="mb-16">
             <h2 className="text-2xl font-bold mb-4">Quickstart</h2>

@@ -47,13 +47,16 @@ const response = await client.chat.completions.create({
           </p>
           
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a href="/chat" className="h-12 px-8 inline-flex items-center justify-center rounded-md bg-foreground text-background font-medium hover:bg-foreground/90 transition-colors w-full sm:w-auto">
-              Start Building
+            <a href="/signup" className="h-12 px-8 inline-flex items-center justify-center rounded-md bg-foreground text-background font-medium hover:bg-foreground/90 transition-colors w-full sm:w-auto">
+              Get your API key
             </a>
             <a href="/docs" className="h-12 px-8 inline-flex items-center justify-center rounded-md border border-input bg-background font-medium hover:bg-accent hover:text-accent-foreground transition-colors w-full sm:w-auto font-mono text-sm">
               Read Docs
             </a>
           </div>
+          <p className="mt-4 text-xs font-mono text-muted-foreground">
+            Already have an account? <a href="/keys" className="underline hover:text-foreground">Manage your keys →</a>
+          </p>
         </div>
       </section>
 

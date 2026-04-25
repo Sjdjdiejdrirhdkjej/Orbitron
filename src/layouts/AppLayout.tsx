@@ -1,15 +1,43 @@
 import { useEffect, useState } from "react";
-import { Outlet, Link, useLocation } from "react-router-dom";
-import { MessageSquare, Cpu, Key, BarChart2, CreditCard, Settings, Menu, X, Image as ImageIcon } from "lucide-react";
+import { Outlet, Link, useLocation, Navigate, useNavigate } from "react-router-dom";
+import { MessageSquare, Cpu, Key, BarChart2, CreditCard, Settings, Menu, X, Image as ImageIcon, LogOut } from "lucide-react";
+import { useAuth } from "../lib/auth";
 
 export function AppLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { user, loading, logout } = useAuth();
 
   // Close drawer on route change
   useEffect(() => {
     setDrawerOpen(false);
   }, [location.pathname]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground font-mono text-sm">
+        Loading…
+      </div>
+    );
+  }
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  }
+
+  const initials =
+    (user.name || user.email)
+      .split(/[\s@]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase())
+      .join("") || "U";
+  const displayName = user.name || user.email.split("@")[0];
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/", { replace: true });
+  };
 
   const navItems = [
     { name: "Chat", path: "/chat", icon: MessageSquare },
@@ -72,11 +100,19 @@ export function AppLayout() {
 
       <div className="p-4 border-t border-border">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-accent grid place-items-center font-mono text-xs">JD</div>
-          <div className="flex flex-col min-w-0">
-            <span className="text-sm font-medium truncate">Jane Doe</span>
-            <span className="text-xs text-muted-foreground font-mono">Pro Plan</span>
+          <div className="w-8 h-8 rounded-full bg-accent grid place-items-center font-mono text-xs shrink-0">{initials}</div>
+          <div className="flex flex-col min-w-0 flex-1">
+            <span className="text-sm font-medium truncate">{displayName}</span>
+            <span className="text-xs text-muted-foreground font-mono truncate">{user.email}</span>
           </div>
+          <button
+            onClick={handleLogout}
+            className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-accent transition-colors"
+            title="Log out"
+            aria-label="Log out"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </div>

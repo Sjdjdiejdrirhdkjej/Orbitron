@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
+import { useAuth } from "../lib/auth";
 
 type AggregateStatus = "operational" | "degraded" | "down" | "loading";
 
@@ -12,6 +13,7 @@ const PILL_META: Record<AggregateStatus, { dot: string; label: string }> = {
 
 export function MarketingLayout() {
   const location = useLocation();
+  const { user, loading: authLoading } = useAuth();
   const [systemStatus, setSystemStatus] = useState<AggregateStatus>("loading");
 
   useEffect(() => {
@@ -62,8 +64,19 @@ export function MarketingLayout() {
               <div className={`w-1.5 h-1.5 rounded-full ${pill.dot}`} />
               {pill.label}
             </Link>
-            <Link to="/login" className="text-sm font-medium hover:text-primary transition-colors">Log in</Link>
-            <Link to="/chat" className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors">Get Started</Link>
+            {authLoading ? null : user ? (
+              <Link
+                to="/chat"
+                className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors"
+              >
+                Open Dashboard
+              </Link>
+            ) : (
+              <>
+                <Link to="/login" className="text-sm font-medium hover:text-primary transition-colors">Log in</Link>
+                <Link to="/signup" className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors">Get Started</Link>
+              </>
+            )}
           </div>
         </div>
       </header>

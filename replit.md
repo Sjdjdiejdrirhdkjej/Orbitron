@@ -7,6 +7,10 @@ A multi-model LLM gateway UI (think OpenRouter), branded **Switchboard**. One AP
 - **Frontend**: React 18 + TypeScript + Vite + Tailwind + React Router v6 + lucide-react
 - **Backend**: Express (`tsx server/index.ts`) running Vite as middleware on port 5000
 - **Providers**: OpenAI, Anthropic, Google Gemini via Replit AI Integrations (no API keys required)
+- **Database**: Replit Postgres (raw `pg` driver) — `users`, `sessions`, `api_keys` tables
+- **Auth**: Email + password (bcryptjs), opaque session tokens stored in DB and delivered as
+  HttpOnly `sb_session` cookie. Personal API keys hashed with SHA-256 (only the prefix is stored
+  in plaintext for display).
 
 ## Run
 
@@ -28,6 +32,26 @@ Global: Cmd/Ctrl+K opens a model search palette.
 - `data: {"error": "..."}` on failure
 
 The route in `server/chat.ts` maps the catalog model id to the real provider model and calls the appropriate SDK with streaming enabled. Conversations are persisted client-side in `localStorage`.
+
+## Auth & API Keys
+
+**Database tables** (created via raw SQL, no ORM):
+- `users` — id (UUID), email (unique), name, password_hash (bcrypt), created_at
+- `sessions` — token (PK), user_id, expires_at — 30-day TTL
+- `api_keys` — id (UUID), user_id, name, prefix (`sk-sb-v1-XXXXXX`), lookup_hash (sha256 of full key, unique), monthly_cap_cents, created_at, last_used_at, revoked_at
+
+**Endpoints** (`server/auth.ts`):
+- `POST /api/auth/signup { email, password, name? }` → 201 + sets `sb_session` cookie
+- `POST /api/auth/login { email, password }` → sets cookie
+- `POST /api/auth/logout` → clears cookie + deletes session row
+- `GET  /api/auth/me` → `{ user }` for current session, 401 otherwise
+- `GET  /api/keys` (session) → list of the current user's keys (prefix only, never the secret)
+- `POST /api/keys { name, monthlyCapCents? }` → returns the **full key once** in `{ key, record }`
+- `DELETE /api/keys/:id` → soft-revoke (sets `revoked_at`)
+
+**Auth middleware** (`requireAuth`) is applied to `/api/chat` and `/api/images`. It accepts either a valid session cookie or an `Authorization: Bearer sk-sb-v1-…` header. The catalog endpoints (`/api/models`, `/api/status`) remain public so the marketing pages keep working. Bearer hits update `last_used_at` asynchronously.
+
+The frontend uses an `AuthProvider` (`src/lib/auth.tsx`) that calls `/api/auth/me` on mount and exposes `useAuth()`. `AppLayout` redirects to `/login` when unauthenticated and the marketing header swaps the "Get Started" CTA for "Open Dashboard" when signed in.
 
 ## REST API
 

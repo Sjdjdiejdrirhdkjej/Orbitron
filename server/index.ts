@@ -2,10 +2,14 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import { registerChatRoutes } from "./chat";
 import { registerApiRoutes } from "./api";
+import { registerAuthRoutes, registerKeyRoutes } from "./auth";
+import { ensureSchema, purgeExpiredSessions } from "./db";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+registerAuthRoutes(app);
+registerKeyRoutes(app);
 registerChatRoutes(app);
 registerApiRoutes(app);
 
@@ -13,6 +17,15 @@ const isProduction = process.env.NODE_ENV === "production";
 const PORT = Number(process.env.PORT) || 5000;
 
 async function start() {
+  // Run schema bootstrap before serving any traffic so a fresh environment
+  // can sign up immediately without manual migration steps.
+  await ensureSchema();
+  await purgeExpiredSessions();
+  // Sweep expired sessions every 6 hours.
+  setInterval(() => {
+    void purgeExpiredSessions();
+  }, 6 * 60 * 60 * 1000).unref?.();
+
   if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true, allowedHosts: true },

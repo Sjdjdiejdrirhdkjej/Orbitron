@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { models as catalog } from "../src/data/models";
+import { requireAuth } from "./auth";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -66,7 +67,7 @@ function approxTokens(text: string): number {
 }
 
 export function registerChatRoutes(app: Express): void {
-  app.post("/api/chat", async (req: Request, res: Response) => {
+  app.post("/api/chat", requireAuth, async (req: Request, res: Response) => {
     const { modelId, messages, temperature, maxTokens } = (req.body || {}) as ChatBody;
 
     if (!modelId || !Array.isArray(messages) || messages.length === 0) {
