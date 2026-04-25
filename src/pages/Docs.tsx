@@ -39,7 +39,7 @@ export default function Docs() {
         <div className="prose prose-invert max-w-none">
           <h1 className="text-4xl font-bold tracking-tight mb-4">Documentation</h1>
           <p className="text-xl text-muted-foreground font-mono text-sm leading-relaxed mb-12">
-            Switchboard provides an OpenAI-compatible API to interact with hundreds of frontier models.
+            Switchboard provides an OpenAI-compatible API to interact with every frontier model from OpenAI, Anthropic, and Google.
           </p>
 
           <section id="quickstart" className="mb-16">

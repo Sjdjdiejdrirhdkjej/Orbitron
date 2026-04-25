@@ -65,7 +65,7 @@ export default function Settings() {
               </p>
               
               <div className="space-y-4">
-                {["OpenAI", "Anthropic", "Google", "Mistral"].map(provider => (
+                {["OpenAI", "Anthropic", "Google"].map(provider => (
                   <div key={provider} className="p-4 border border-border rounded-lg bg-card flex gap-4 items-center justify-between">
                     <div className="font-medium w-24">{provider}</div>
                     <div className="flex-1">

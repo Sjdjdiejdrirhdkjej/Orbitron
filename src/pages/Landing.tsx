@@ -9,7 +9,7 @@ export default function Landing() {
         <div className="container mx-auto text-center max-w-4xl relative z-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-muted/50 border border-border text-sm font-mono text-muted-foreground mb-8">
             <span className="flex h-2 w-2 rounded-full bg-primary animate-pulse" />
-            Llama 4 & Claude 4.5 now available
+            GPT-5 & Claude 4.5 now available
           </div>
           
           <h1 className="text-6xl md:text-8xl font-bold tracking-tighter mb-8 leading-[1.1]">
@@ -18,7 +18,7 @@ export default function Landing() {
           </h1>
           
           <p className="text-xl text-muted-foreground mb-12 max-w-2xl mx-auto font-mono text-sm md:text-base leading-relaxed">
-            Switchboard is the neutral infrastructure for AI. Access OpenAI, Anthropic, Google, Meta, and 40+ other models through a single API key. Transparent per-token pricing. Zero markup.
+            Switchboard is the neutral infrastructure for AI. Access every frontier model from OpenAI, Anthropic, and Google through a single API key. Transparent per-token pricing. Zero markup.
           </p>
           
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

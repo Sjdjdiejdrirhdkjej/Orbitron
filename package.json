@@ -9,11 +9,17 @@
     "preview": "vite preview --host 0.0.0.0 --port 5000"
   },
   "dependencies": {
+    "@google/genai": "^1.50.1",
+    "clsx": "^2.1.1",
+    "drizzle-zod": "^0.8.3",
+    "lucide-react": "^0.453.0",
+    "p-limit": "^7.3.0",
+    "p-retry": "^7.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
-    "lucide-react": "^0.453.0",
-    "clsx": "^2.1.1"
+    "zod": "^4.3.6",
+    "zod-validation-error": "^5.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",
