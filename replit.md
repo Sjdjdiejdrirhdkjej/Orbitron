@@ -62,13 +62,25 @@ On startup `ensureSchema()` detects the legacy email/password tables (by looking
 the `users.password_hash` column) and drops `users` / `sessions` / `api_keys` so the
 new schema can be created cleanly. New environments are unaffected.
 
-**Switchboard endpoints** (`server/auth.ts`):
+**Switchboard endpoints**:
 - `GET  /api/auth/user` — current Replit-authenticated user, 401 otherwise
 - `GET  /api/login`, `/api/logout`, `/api/callback` — Replit Auth OIDC flow
+- `GET  /api/auth/sessions` (session) → list of the user's active sessions
+  with device (parsed from user-agent via `ua-parser-js`), IP, lastSeenAt,
+  expiresAt, and a `current: boolean` flag for the calling session
+- `POST /api/auth/sessions/revoke-others` (session) → deletes every session
+  row for the user except the current `req.sessionID`; returns
+  `{ ok: true, revoked: <count> }`
 - `GET  /api/keys` (session) → list of the current user's keys (prefix only)
 - `POST /api/keys { name, monthlyCapCents? }` → returns the **full key once** in
   `{ key, record }`
 - `DELETE /api/keys/:id` → soft-revoke (sets `revoked_at`)
+
+**Session activity tracking**: a tiny middleware (`trackSessionActivity` in
+`server/replit_integrations/auth/sessions.ts`) stamps every authenticated
+request's `req.session` with `userAgent`, `ip`, `lastSeenAt`, and `createdAt`
+so the Settings → Recent sign-ins panel has data. The middleware only writes
+back when a field actually changes or once a minute, so it's cheap.
 
 **Auth middleware**:
 - `requireAuth` (in `server/auth.ts`) is applied to `/api/chat` and `/api/images`. It

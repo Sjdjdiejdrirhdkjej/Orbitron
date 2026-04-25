@@ -3,7 +3,12 @@ import { createServer as createViteServer } from "vite";
 import { registerChatRoutes } from "./chat";
 import { registerApiRoutes } from "./api";
 import { registerKeyRoutes } from "./auth";
-import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
+import {
+  setupAuth,
+  registerAuthRoutes,
+  registerSessionRoutes,
+  trackSessionActivity,
+} from "./replit_integrations/auth";
 import { ensureSchema, purgeExpiredSessions } from "./db";
 
 const app = express();
@@ -25,7 +30,11 @@ async function start() {
   // Replit Auth (sets up session, passport, /api/login, /api/logout, /api/callback).
   // Must happen BEFORE any route that depends on session/passport state.
   await setupAuth(app);
+  // Stamp every authenticated request with userAgent / ip / lastSeenAt so the
+  // Settings → Recent sign-ins panel has data. Cheap (rate-limited internally).
+  app.use(trackSessionActivity);
   registerAuthRoutes(app);
+  registerSessionRoutes(app);
 
   registerKeyRoutes(app);
   registerChatRoutes(app);

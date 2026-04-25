@@ -19,6 +19,7 @@
     "@types/node": "^25.6.0",
     "@types/passport": "^1.0.17",
     "@types/pg": "^8.20.0",
+    "@types/ua-parser-js": "^0.7.39",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "connect-pg-simple": "^10.0.0",
@@ -37,6 +38,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "tsx": "^4.21.0",
+    "ua-parser-js": "^2.0.9",
     "zod": "^4.3.6",
     "zod-validation-error": "^5.0.0"
   },
