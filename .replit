@@ -45,5 +45,5 @@ externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["bash", "-c", "NODE_ENV=production npx tsx server/index.ts"]
+run = ["node", "dist-server/index.js"]
 build = ["npm", "run", "build"]
