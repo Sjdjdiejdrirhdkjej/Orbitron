@@ -1,4 +1,14 @@
+import { useEffect, useState } from "react";
+
 export default function Landing() {
+  const [baseUrl, setBaseUrl] = useState("https://your-deployment.replit.app");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setBaseUrl(window.location.origin);
+    }
+  }, []);
+
   return (
     <div className="flex flex-col animate-fade-in">
       <section className="pt-32 pb-24 px-4 relative overflow-hidden">
@@ -71,11 +81,11 @@ export default function Landing() {
                   <code className="text-muted-foreground">
 <span className="text-blue-400">import</span> OpenAI <span className="text-blue-400">from</span> <span className="text-green-400">"openai"</span>;{`\n\n`}
 <span className="text-blue-400">const</span> client = <span className="text-blue-400">new</span> OpenAI({`{`}{`\n`}
-{'  '}baseURL: <span className="text-green-400">"https://api.switchboard.dev/v1"</span>,{`\n`}
+{'  '}baseURL: <span className="text-green-400">"{baseUrl}/api"</span>,{`\n`}
 {'  '}apiKey: process.env.SWITCHBOARD_API_KEY,{`\n`}
 {`}`});{`\n\n`}
 <span className="text-blue-400">const</span> response = <span className="text-blue-400">await</span> client.chat.completions.create({`{`}{`\n`}
-{'  '}model: <span className="text-green-400">"anthropic/claude-sonnet-4.5"</span>, <span className="text-muted-foreground/50">// Just change this</span>{`\n`}
+{'  '}model: <span className="text-green-400">"claude-sonnet-4.6"</span>, <span className="text-muted-foreground/50">// Just change this</span>{`\n`}
 {'  '}messages: [{`\n`}
 {'    '}{`{`} role: <span className="text-green-400">"user"</span>, content: <span className="text-green-400">"Explain quantum gravity"</span> {`}`}{`\n`}
 {'  '}],{`\n`}
