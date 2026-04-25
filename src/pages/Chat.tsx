@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Settings2,
   Send,
@@ -284,6 +285,24 @@ export default function Chat() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Apply ?model= from URL (e.g. coming from the Models catalog) on mount.
+  useEffect(() => {
+    const requested = searchParams.get("model");
+    if (!requested) return;
+    if (models.some((m) => m.id === requested)) {
+      setSettings((s) => ({ ...s, modelId: requested }));
+      setConversations((prev) =>
+        prev.map((c) => (c.id === activeId ? { ...c, modelId: requested } : c))
+      );
+    }
+    // Clean the param so a refresh / back-nav doesn't keep reapplying it.
+    const next = new URLSearchParams(searchParams);
+    next.delete("model");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));

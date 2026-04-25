@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { Search, Filter, ArrowUpDown, Check, Sparkles, X } from "lucide-react";
 import { models, providers, Modality } from "../data/models";
 
@@ -353,9 +354,12 @@ export default function Models() {
                 </div>
 
                 <div className="flex items-center border-t md:border-t-0 md:border-l border-border pt-4 md:pt-0 md:pl-6">
-                  <button className="px-4 py-2 bg-foreground text-background rounded font-medium text-sm hover:bg-foreground/90 w-full md:w-auto whitespace-nowrap">
+                  <Link
+                    to={`/chat?model=${encodeURIComponent(model.id)}`}
+                    className="px-4 py-2 bg-foreground text-background rounded font-medium text-sm hover:bg-foreground/90 w-full md:w-auto whitespace-nowrap text-center"
+                  >
                     Use Model
-                  </button>
+                  </Link>
                 </div>
               </div>
             ))}
