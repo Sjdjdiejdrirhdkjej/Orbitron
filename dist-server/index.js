@@ -311,6 +311,58 @@ async function ensureSchema() {
       ON usage_events(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS usage_events_model_created_idx
       ON usage_events(model_id, created_at DESC);
+
+    -- Credit balance lives on the user row for cheap reads. Stored as integer
+    -- cents to avoid floating-point drift. Two grant timestamps double as
+    -- idempotency flags so we never double-grant the welcome or legacy bonus.
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS credit_balance_cents INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS welcome_credit_granted_at TIMESTAMPTZ;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS legacy_credit_granted_at TIMESTAMPTZ;
+
+    -- Audit trail of every credit movement (grants today; top-ups & usage
+    -- deductions later). Powers the Credits page transactions list.
+    CREATE TABLE IF NOT EXISTS credit_grants (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount_cents INTEGER NOT NULL,
+      reason TEXT NOT NULL,                     -- 'welcome' | 'legacy_bonus' | 'topup' | \u2026
+      description TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS credit_grants_user_created_idx
+      ON credit_grants(user_id, created_at DESC);
+
+    -- User display preferences and notification settings
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'system';
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS compact_mode BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS default_model TEXT;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS usage_alert_threshold_cents INTEGER NOT NULL DEFAULT 5000;
+  `);
+  await pool.query(`
+    WITH eligible AS (
+      SELECT id FROM users
+       WHERE legacy_credit_granted_at IS NULL
+         AND welcome_credit_granted_at IS NULL
+    ), grants AS (
+      INSERT INTO credit_grants (user_id, amount_cents, reason, description)
+      SELECT id, 10000, 'legacy_bonus',
+             'One-time $100 launch bonus for existing accounts'
+        FROM eligible
+      RETURNING user_id
+    )
+    UPDATE users
+       SET credit_balance_cents = credit_balance_cents + 10000,
+           legacy_credit_granted_at = NOW()
+     WHERE id IN (SELECT user_id FROM grants);
   `);
 }
 async function purgeExpiredSessions() {
@@ -338,30 +390,114 @@ function rowToUser(row) {
     lastName: row.last_name,
     profileImageUrl: row.profile_image_url,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    preferences: {
+      theme: row.theme || "system",
+      compactMode: row.compact_mode ?? false,
+      defaultModel: row.default_model ?? null,
+      emailNotifications: row.email_notifications ?? true,
+      usageAlertThresholdCents: row.usage_alert_threshold_cents ?? 5e3
+    }
+  };
+}
+function rowToPreferences(row) {
+  return {
+    theme: row.theme || "system",
+    compactMode: row.compact_mode ?? false,
+    defaultModel: row.default_model ?? null,
+    emailNotifications: row.email_notifications ?? true,
+    usageAlertThresholdCents: row.usage_alert_threshold_cents ?? 5e3
   };
 }
 var AuthStorage = class {
   async getUser(id) {
     const result = await query(
-      `SELECT id, email, first_name, last_name, profile_image_url, created_at, updated_at
+      `SELECT id, email, first_name, last_name, profile_image_url, created_at, updated_at,
+              theme, compact_mode, default_model, email_notifications, usage_alert_threshold_cents
          FROM users WHERE id = $1`,
       [id]
     );
     const row = result.rows[0];
     return row ? rowToUser(row) : void 0;
   }
+  async getPreferences(userId) {
+    const result = await query(
+      `SELECT theme, compact_mode, default_model, email_notifications, usage_alert_threshold_cents
+         FROM users WHERE id = $1`,
+      [userId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return {
+        theme: "system",
+        compactMode: false,
+        defaultModel: null,
+        emailNotifications: true,
+        usageAlertThresholdCents: 5e3
+      };
+    }
+    return rowToPreferences(row);
+  }
+  async updatePreferences(userId, prefs) {
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+    if (prefs.theme !== void 0) {
+      updates.push(`theme = $${paramIndex++}`);
+      values.push(prefs.theme);
+    }
+    if (prefs.compactMode !== void 0) {
+      updates.push(`compact_mode = $${paramIndex++}`);
+      values.push(prefs.compactMode);
+    }
+    if (prefs.defaultModel !== void 0) {
+      updates.push(`default_model = $${paramIndex++}`);
+      values.push(prefs.defaultModel);
+    }
+    if (prefs.emailNotifications !== void 0) {
+      updates.push(`email_notifications = $${paramIndex++}`);
+      values.push(prefs.emailNotifications);
+    }
+    if (prefs.usageAlertThresholdCents !== void 0) {
+      updates.push(`usage_alert_threshold_cents = $${paramIndex++}`);
+      values.push(prefs.usageAlertThresholdCents);
+    }
+    if (updates.length === 0) {
+      return this.getPreferences(userId);
+    }
+    values.push(userId);
+    const result = await query(
+      `UPDATE users SET ${updates.join(", ")}, updated_at = NOW()
+       WHERE id = $${paramIndex}
+       RETURNING theme, compact_mode, default_model, email_notifications, usage_alert_threshold_cents`,
+      values
+    );
+    return rowToPreferences(result.rows[0]);
+  }
   async upsertUser(userData) {
     const result = await query(
-      `INSERT INTO users (id, email, first_name, last_name, profile_image_url, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         email = EXCLUDED.email,
-         first_name = EXCLUDED.first_name,
-         last_name = EXCLUDED.last_name,
-         profile_image_url = EXCLUDED.profile_image_url,
-         updated_at = NOW()
-       RETURNING id, email, first_name, last_name, profile_image_url, created_at, updated_at`,
+      `WITH upserted AS (
+         INSERT INTO users (
+           id, email, first_name, last_name, profile_image_url,
+           created_at, updated_at,
+           credit_balance_cents, welcome_credit_granted_at
+         )
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), 500, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           email = EXCLUDED.email,
+           first_name = EXCLUDED.first_name,
+           last_name = EXCLUDED.last_name,
+           profile_image_url = EXCLUDED.profile_image_url,
+           updated_at = NOW()
+         RETURNING id, email, first_name, last_name, profile_image_url,
+                   created_at, updated_at, (xmax = 0) AS inserted
+       ), audit AS (
+         INSERT INTO credit_grants (user_id, amount_cents, reason, description)
+         SELECT id, 500, 'welcome', 'Welcome bonus'
+           FROM upserted WHERE inserted = true
+         RETURNING user_id
+       )
+       SELECT * FROM upserted`,
       [
         userData.id,
         userData.email ?? null,
@@ -512,6 +648,35 @@ function registerAuthRoutes(app2) {
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+  app2.get("/api/auth/preferences", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const preferences = await authStorage.getPreferences(userId);
+      res.json(preferences);
+    } catch (error) {
+      console.error("Error fetching preferences:", error);
+      res.status(500).json({ message: "Failed to fetch preferences" });
+    }
+  });
+  app2.put("/api/auth/preferences", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const updates = req.body;
+      if (updates.theme !== void 0 && !["light", "dark", "system"].includes(updates.theme)) {
+        return res.status(400).json({ message: "Invalid theme value" });
+      }
+      if (updates.usageAlertThresholdCents !== void 0) {
+        if (typeof updates.usageAlertThresholdCents !== "number" || updates.usageAlertThresholdCents < 0) {
+          return res.status(400).json({ message: "Invalid usage alert threshold" });
+        }
+      }
+      const preferences = await authStorage.updatePreferences(userId, updates);
+      res.json(preferences);
+    } catch (error) {
+      console.error("Error updating preferences:", error);
+      res.status(500).json({ message: "Failed to update preferences" });
     }
   });
 }
@@ -1388,6 +1553,34 @@ function registerChatRoutes(app2) {
 import OpenAI2 from "openai";
 import Anthropic2 from "@anthropic-ai/sdk";
 import { GoogleGenAI as GoogleGenAI2 } from "@google/genai";
+
+// server/credits.ts
+async function getCreditsState(userId) {
+  const userRes = await query(
+    `SELECT credit_balance_cents,
+            welcome_credit_granted_at,
+            legacy_credit_granted_at
+       FROM users WHERE id = $1`,
+    [userId]
+  );
+  const grantsRes = await query(
+    `SELECT id, amount_cents, reason, description, created_at
+       FROM credit_grants
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 50`,
+    [userId]
+  );
+  const row = userRes.rows[0];
+  return {
+    balanceCents: row?.credit_balance_cents ?? 0,
+    welcomeGrantedAt: row?.welcome_credit_granted_at ?? null,
+    legacyGrantedAt: row?.legacy_credit_granted_at ?? null,
+    grants: grantsRes.rows
+  };
+}
+
+// server/api.ts
 var openai2 = new OpenAI2({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
@@ -1546,6 +1739,29 @@ function registerApiRoutes(app2) {
     } catch (err) {
       console.error("Usage summary error:", err);
       res.status(500).json({ error: { message: "Failed to load usage" } });
+    }
+  });
+  app2.get("/api/credits", requireAuth, async (req, res) => {
+    const userId = req.auth.user.id;
+    try {
+      const state = await getCreditsState(userId);
+      res.json({
+        balanceCents: state.balanceCents,
+        balanceUsd: state.balanceCents / 100,
+        welcomeGrantedAt: state.welcomeGrantedAt,
+        legacyGrantedAt: state.legacyGrantedAt,
+        grants: state.grants.map((g) => ({
+          id: g.id,
+          amountCents: g.amount_cents,
+          amountUsd: g.amount_cents / 100,
+          reason: g.reason,
+          description: g.description,
+          createdAt: g.created_at
+        }))
+      });
+    } catch (err) {
+      console.error("Credits state error:", err);
+      res.status(500).json({ error: { message: "Failed to load credits" } });
     }
   });
   app2.post("/api/images", requireAuth, async (req, res) => {

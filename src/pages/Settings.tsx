@@ -9,8 +9,63 @@ import {
   Loader2,
   AlertTriangle,
   LogOut,
+  Sun,
+  Moon,
+  Monitor as MonitorIcon,
+  Bell,
+  BellOff,
+  DollarSign,
 } from "lucide-react";
 import { useAuth, displayNameFor, initialsFor } from "../lib/auth";
+
+interface UserPreferences {
+  theme: "light" | "dark" | "system";
+  compactMode: boolean;
+  defaultModel: string | null;
+  emailNotifications: boolean;
+  usageAlertThresholdCents: number;
+}
+
+const DEFAULT_PREFERENCES: UserPreferences = {
+  theme: "system",
+  compactMode: false,
+  defaultModel: null,
+  emailNotifications: true,
+  usageAlertThresholdCents: 5000,
+};
+
+const PREFS_STORAGE_KEY = "switchboard.preferences.v1";
+
+// Load preferences from localStorage or use defaults
+function loadLocalPreferences(): UserPreferences {
+  try {
+    const saved = localStorage.getItem(PREFS_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return { ...DEFAULT_PREFERENCES, ...parsed };
+    }
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_PREFERENCES;
+}
+
+// Save preferences to localStorage
+function saveLocalPreferences(prefs: UserPreferences): void {
+  try {
+    localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+  } catch {
+    /* ignore */
+  }
+}
+
+const USAGE_THRESHOLD_OPTIONS = [
+  { value: 1000, label: "$10" },
+  { value: 2500, label: "$25" },
+  { value: 5000, label: "$50" },
+  { value: 10000, label: "$100" },
+  { value: 25000, label: "$250" },
+];
 
 interface SessionInfo {
   id: string;
@@ -50,6 +105,11 @@ export default function Settings() {
   const [revoking, setRevoking] = useState(false);
   const [revokeNotice, setRevokeNotice] = useState<string | null>(null);
 
+  // Preferences state
+  const [preferences, setPreferences] = useState<UserPreferences>(loadLocalPreferences);
+  const [preferencesError, setPreferencesError] = useState<string | null>(null);
+  const [savingPrefs, setSavingPrefs] = useState(false);
+
   const refreshSessions = useCallback(async () => {
     try {
       const res = await fetch("/api/auth/sessions", { credentials: "include" });
@@ -62,11 +122,31 @@ export default function Settings() {
     }
   }, []);
 
+  // Fetch preferences from server when authenticated
+  const refreshPreferences = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/preferences", { credentials: "include" });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      const prefs = await res.json() as UserPreferences;
+      setPreferences(prefs);
+      setPreferencesError(null);
+    } catch (err) {
+      setPreferencesError(err instanceof Error ? err.message : "Failed to load preferences");
+    }
+  }, []);
+
   useEffect(() => {
     if (activeTab === "profile") {
       void refreshSessions();
     }
   }, [activeTab, refreshSessions]);
+
+  // Fetch preferences on mount and when authenticated
+  useEffect(() => {
+    if (user) {
+      void refreshPreferences();
+    }
+  }, [user, refreshPreferences]);
 
   const handleRevokeOthers = async () => {
     if (!confirm("Sign out of every other browser and device? You'll stay signed in here.")) return;
@@ -93,6 +173,68 @@ export default function Settings() {
   };
 
   const otherSessionCount = (sessions ?? []).filter((s) => !s.current).length;
+
+  // Update a single preference and sync to server
+  const updatePreference = async <K extends keyof UserPreferences>(
+    key: K,
+    value: UserPreferences[K],
+  ) => {
+    const newPrefs = { ...preferences, [key]: value };
+    setPreferences(newPrefs);
+    saveLocalPreferences(newPrefs); // Optimistic local save
+
+    // If not authenticated, just use localStorage
+    if (!user) return;
+
+    setSavingPrefs(true);
+    try {
+      const res = await fetch("/api/auth/preferences", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      const updated = await res.json() as UserPreferences;
+      setPreferences(updated);
+      saveLocalPreferences(updated);
+    } catch (err) {
+      setPreferencesError(err instanceof Error ? err.message : "Failed to save preference");
+      // Revert to previous value on error
+      setPreferences(preferences);
+      saveLocalPreferences(preferences);
+    } finally {
+      setSavingPrefs(false);
+    }
+  };
+
+  // Apply theme to document
+  useEffect(() => {
+    const root = document.documentElement;
+    if (preferences.theme === "dark") {
+      root.classList.add("dark");
+    } else if (preferences.theme === "light") {
+      root.classList.remove("dark");
+    } else {
+      // System preference
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (prefersDark) {
+        root.classList.add("dark");
+      } else {
+        root.classList.remove("dark");
+      }
+    }
+  }, [preferences.theme]);
+
+  // Apply compact mode to document
+  useEffect(() => {
+    const root = document.documentElement;
+    if (preferences.compactMode) {
+      root.classList.add("compact");
+    } else {
+      root.classList.remove("compact");
+    }
+  }, [preferences.compactMode]);
 
   const tabs = [
     { id: "profile", label: "Profile", icon: User },
@@ -319,18 +461,6 @@ export default function Settings() {
                       <td className="px-4 py-3 text-muted-foreground">Owner</td>
                       <td className="px-4 py-3 text-right"></td>
                     </tr>
-                    <tr>
-                      <td className="px-4 py-3 font-medium">Alice Dev</td>
-                      <td className="px-4 py-3">
-                        <select className="bg-transparent border border-border rounded px-2 py-1 text-sm">
-                          <option>Admin</option>
-                          <option>Member</option>
-                        </select>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button className="text-red-400 hover:text-red-500 text-xs font-medium">Remove</button>
-                      </td>
-                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -340,9 +470,177 @@ export default function Settings() {
             </div>
           )}
           
-          {(activeTab === "security" || activeTab === "prefs") && (
+          {activeTab === "prefs" && (
+            <div className="space-y-8">
+              {/* Display Preferences */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <MonitorIcon className="w-4 h-4 text-muted-foreground" />
+                  <h3 className="text-lg font-bold">Display</h3>
+                </div>
+
+                {/* Theme */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border border-border rounded-lg bg-card">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <Sun className="w-4 h-4 text-muted-foreground" />
+                      <Moon className="w-4 h-4 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium">Theme</div>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        Choose your preferred color scheme
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-1 bg-muted/40 rounded-md p-1">
+                    {(["light", "dark", "system"] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => void updatePreference("theme", t)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                          preferences.theme === t
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t.charAt(0).toUpperCase() + t.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Compact Mode */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border border-border rounded-lg bg-card">
+                  <div>
+                    <div className="text-sm font-medium">Compact mode</div>
+                    <div className="text-xs text-muted-foreground font-mono">
+                      Reduce spacing and element sizes for denser layouts
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => void updatePreference("compactMode", !preferences.compactMode)}
+                    disabled={savingPrefs}
+                    className={`relative w-11 h-6 rounded-full transition-colors touch-target ${
+                      preferences.compactMode ? "bg-primary" : "bg-muted"
+                    }`}
+                    aria-label="Toggle compact mode"
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 bg-background rounded-full shadow transition-transform ${
+                        preferences.compactMode ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Default Model */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border border-border rounded-lg bg-card">
+                  <div>
+                    <div className="text-sm font-medium">Default model</div>
+                    <div className="text-xs text-muted-foreground font-mono">
+                      Model pre-selected in chat composer
+                    </div>
+                  </div>
+                  <select
+                    value={preferences.defaultModel ?? ""}
+                    onChange={(e) => void updatePreference("defaultModel", e.target.value || null)}
+                    disabled={savingPrefs}
+                    className="bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary min-w-[140px]"
+                  >
+                    <option value="">None (All models)</option>
+                    <option value="gpt-4o">GPT-4o</option>
+                    <option value="claude-sonnet-4">Claude Sonnet 4</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Notification Preferences */}
+              <div className="space-y-4 pt-4 border-t border-border">
+                <div className="flex items-center gap-2 mb-4">
+                  <Bell className="w-4 h-4 text-muted-foreground" />
+                  <h3 className="text-lg font-bold">Notifications</h3>
+                </div>
+
+                {/* Email Notifications */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border border-border rounded-lg bg-card">
+                  <div className="flex items-start gap-3">
+                    {preferences.emailNotifications ? (
+                      <Bell className="w-4 h-4 mt-0.5 text-primary" />
+                    ) : (
+                      <BellOff className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                    )}
+                    <div>
+                      <div className="text-sm font-medium">Email notifications</div>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        Receive important updates and alerts via email
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => void updatePreference("emailNotifications", !preferences.emailNotifications)}
+                    disabled={savingPrefs}
+                    className={`relative w-11 h-6 rounded-full transition-colors touch-target ${
+                      preferences.emailNotifications ? "bg-primary" : "bg-muted"
+                    }`}
+                    aria-label="Toggle email notifications"
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 bg-background rounded-full shadow transition-transform ${
+                        preferences.emailNotifications ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Usage Alert Threshold */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border border-border rounded-lg bg-card">
+                  <div className="flex items-start gap-3">
+                    <DollarSign className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                    <div>
+                      <div className="text-sm font-medium">Usage alert threshold</div>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        Get notified when spending reaches this amount
+                      </div>
+                    </div>
+                  </div>
+                  <select
+                    value={preferences.usageAlertThresholdCents}
+                    onChange={(e) => void updatePreference("usageAlertThresholdCents", parseInt(e.target.value, 10))}
+                    disabled={savingPrefs}
+                    className="bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary min-w-[100px]"
+                  >
+                    {USAGE_THRESHOLD_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Error display */}
+              {preferencesError && (
+                <div className="border border-yellow-500/40 bg-yellow-500/10 text-yellow-200 rounded-md px-4 py-3 text-sm font-mono flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  {preferencesError}
+                </div>
+              )}
+
+              {/* Saving indicator */}
+              {savingPrefs && (
+                <div className="text-xs font-mono text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Saving...
+                </div>
+              )}
+            </div>
+          )}
+
+          {(activeTab === "security") && (
             <div className="flex h-32 items-center justify-center border border-dashed border-border rounded-lg text-muted-foreground font-mono text-sm">
-              Settings panel component stub
+              Security settings coming soon
             </div>
           )}
         </div>

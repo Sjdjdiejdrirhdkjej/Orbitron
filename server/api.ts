@@ -10,6 +10,7 @@ import {
   getUsageSummary,
   getMeasuredModelStats,
 } from "./usage";
+import { getCreditsState } from "./credits";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -212,6 +213,31 @@ export function registerApiRoutes(app: Express): void {
     } catch (err) {
       console.error("Usage summary error:", err);
       res.status(500).json({ error: { message: "Failed to load usage" } });
+    }
+  });
+
+  // GET /api/credits — current user's credit balance + grant history.
+  app.get("/api/credits", requireAuth, async (req: Request, res: Response) => {
+    const userId = req.auth!.user.id;
+    try {
+      const state = await getCreditsState(userId);
+      res.json({
+        balanceCents: state.balanceCents,
+        balanceUsd: state.balanceCents / 100,
+        welcomeGrantedAt: state.welcomeGrantedAt,
+        legacyGrantedAt: state.legacyGrantedAt,
+        grants: state.grants.map((g) => ({
+          id: g.id,
+          amountCents: g.amount_cents,
+          amountUsd: g.amount_cents / 100,
+          reason: g.reason,
+          description: g.description,
+          createdAt: g.created_at,
+        })),
+      });
+    } catch (err) {
+      console.error("Credits state error:", err);
+      res.status(500).json({ error: { message: "Failed to load credits" } });
     }
   });
 

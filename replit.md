@@ -1,6 +1,15 @@
 # Switchboard — LLM Router UI
 
-A multi-model LLM gateway UI (think OpenRouter), branded **Switchboard**. One API key for every closed-source frontier model from OpenAI, Anthropic, and Google, billed per token at transparent prices. Chat, Images, Status, Models catalog, and the Usage analytics page are all wired to real data. Pages where there's no real data source yet (e.g. Billing & Credits, model benchmark scores) render a clean "not configured" empty state instead of fabricated numbers.
+A multi-model LLM gateway UI (think OpenRouter), branded **Switchboard**. One API key for every closed-source frontier model from OpenAI, Anthropic, and Google, billed per token at transparent prices. Chat, Images, Status, Models catalog, the Usage analytics page, and Billing credits are all wired to real data. Pages where there's no real data source yet (e.g. paid top-ups, invoices, model benchmark scores) render a clean "not configured" empty state instead of fabricated numbers.
+
+## Credits
+
+Every user has a real `credit_balance_cents` on the `users` row plus a `credit_grants` audit table. Two grant types ship today:
+
+- **Welcome bonus** — $5 (500 cents) granted atomically when a user is first inserted by Replit Auth's `upsertUser`. The grant is encoded directly in the INSERT (so the new row already has the balance set) and is gated by `xmax = 0` so re-logins never re-grant. Idempotency flag: `welcome_credit_granted_at`.
+- **Legacy bonus** — $100 (10,000 cents) one-time backfill applied during `ensureSchema()` on first boot of the credits feature. Targets every user that pre-dates the welcome bonus (`welcome_credit_granted_at IS NULL AND legacy_credit_granted_at IS NULL`). Idempotent: re-running `ensureSchema` is a no-op once `legacy_credit_granted_at` is set.
+
+`GET /api/credits` (auth required) returns `{ balanceCents, balanceUsd, welcomeGrantedAt, legacyGrantedAt, grants: [...] }`. The Credits page renders the live balance and the grant history; paid top-ups, invoices, and usage deductions are still unwired and shown as explicit empty states.
 
 ## Stack
 

@@ -113,6 +113,62 @@ export async function ensureSchema(): Promise<void> {
       ON usage_events(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS usage_events_model_created_idx
       ON usage_events(model_id, created_at DESC);
+
+    -- Credit balance lives on the user row for cheap reads. Stored as integer
+    -- cents to avoid floating-point drift. Two grant timestamps double as
+    -- idempotency flags so we never double-grant the welcome or legacy bonus.
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS credit_balance_cents INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS welcome_credit_granted_at TIMESTAMPTZ;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS legacy_credit_granted_at TIMESTAMPTZ;
+
+    -- Audit trail of every credit movement (grants today; top-ups & usage
+    -- deductions later). Powers the Credits page transactions list.
+    CREATE TABLE IF NOT EXISTS credit_grants (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount_cents INTEGER NOT NULL,
+      reason TEXT NOT NULL,                     -- 'welcome' | 'legacy_bonus' | 'topup' | …
+      description TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS credit_grants_user_created_idx
+      ON credit_grants(user_id, created_at DESC);
+
+    -- User display preferences and notification settings
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'system';
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS compact_mode BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS default_model TEXT;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS usage_alert_threshold_cents INTEGER NOT NULL DEFAULT 5000;
+  `);
+
+  // One-time legacy bonus: $100 to every user that existed before the credits
+  // feature shipped (i.e. they never received the welcome bonus). Idempotent
+  // via legacy_credit_granted_at — re-running ensureSchema is a no-op.
+  await pool.query(`
+    WITH eligible AS (
+      SELECT id FROM users
+       WHERE legacy_credit_granted_at IS NULL
+         AND welcome_credit_granted_at IS NULL
+    ), grants AS (
+      INSERT INTO credit_grants (user_id, amount_cents, reason, description)
+      SELECT id, 10000, 'legacy_bonus',
+             'One-time $100 launch bonus for existing accounts'
+        FROM eligible
+      RETURNING user_id
+    )
+    UPDATE users
+       SET credit_balance_cents = credit_balance_cents + 10000,
+           legacy_credit_granted_at = NOW()
+     WHERE id IN (SELECT user_id FROM grants);
   `);
 }
 
