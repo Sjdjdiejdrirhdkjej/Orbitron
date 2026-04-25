@@ -1,8 +1,10 @@
 import React, { useState } from "react";
-import { User, Users, Shield, Key as KeyIcon, Monitor } from "lucide-react";
+import { User, Users, Shield, Key as KeyIcon, Monitor, ExternalLink } from "lucide-react";
+import { useAuth, displayNameFor, initialsFor } from "../lib/auth";
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("profile");
+  const { user } = useAuth();
 
   const tabs = [
     { id: "profile", label: "Profile", icon: User },
@@ -36,23 +38,66 @@ export default function Settings() {
           {activeTab === "profile" && (
             <div className="space-y-6">
               <div className="flex items-center gap-6 mb-8">
-                <div className="w-20 h-20 rounded-full bg-accent grid place-items-center font-mono text-2xl font-bold">JD</div>
-                <button className="px-4 py-2 border border-border rounded-md font-medium text-sm hover:bg-muted transition-colors">
-                  Upload Avatar
-                </button>
+                {user?.profileImageUrl ? (
+                  <img
+                    src={user.profileImageUrl}
+                    alt=""
+                    className="w-20 h-20 rounded-full bg-accent object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="w-20 h-20 rounded-full bg-accent grid place-items-center font-mono text-2xl font-bold">
+                    {user ? initialsFor(user) : "—"}
+                  </div>
+                )}
+                <div className="text-xs font-mono text-muted-foreground max-w-xs">
+                  Your avatar is provided by your Replit account. Update it in your Replit profile settings.
+                </div>
               </div>
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1.5 font-mono text-muted-foreground">Full Name</label>
-                  <input type="text" defaultValue="Jane Doe" className="w-full bg-background border border-border rounded-md px-3 py-2 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary max-w-md" />
+                  <input
+                    type="text"
+                    value={user ? displayNameFor(user) : ""}
+                    readOnly
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 font-mono text-sm focus:outline-none max-w-md text-muted-foreground cursor-not-allowed"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5 font-mono text-muted-foreground">Email Address</label>
-                  <input type="email" defaultValue="jane@acmecorp.com" className="w-full bg-background border border-border rounded-md px-3 py-2 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary max-w-md" disabled />
+                  <input
+                    type="email"
+                    value={user?.email ?? ""}
+                    readOnly
+                    placeholder="Not provided by your Replit account"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 font-mono text-sm focus:outline-none max-w-md text-muted-foreground cursor-not-allowed"
+                  />
                 </div>
-                <button className="mt-4 px-4 py-2 bg-foreground text-background rounded-md font-medium text-sm hover:bg-foreground/90 transition-colors">
-                  Save Changes
-                </button>
+                <div>
+                  <label className="block text-sm font-medium mb-1.5 font-mono text-muted-foreground">User ID</label>
+                  <input
+                    type="text"
+                    value={user?.id ?? ""}
+                    readOnly
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 font-mono text-xs focus:outline-none max-w-md text-muted-foreground cursor-not-allowed"
+                  />
+                </div>
+
+                <div className="mt-6 p-4 border border-border rounded-md bg-muted/20 max-w-md">
+                  <p className="text-xs font-mono text-muted-foreground mb-3">
+                    Profile fields are managed by your Replit account and refresh on every sign-in.
+                  </p>
+                  <a
+                    href="https://replit.com/account"
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground hover:underline"
+                  >
+                    Manage on Replit <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
               </div>
             </div>
           )}
@@ -98,7 +143,10 @@ export default function Settings() {
                   </thead>
                   <tbody className="divide-y border-border">
                     <tr>
-                      <td className="px-4 py-3 font-medium">Jane Doe <span className="text-muted-foreground font-normal">(you)</span></td>
+                      <td className="px-4 py-3 font-medium">
+                        {user ? displayNameFor(user) : "—"}{" "}
+                        <span className="text-muted-foreground font-normal">(you)</span>
+                      </td>
                       <td className="px-4 py-3 text-muted-foreground">Owner</td>
                       <td className="px-4 py-3 text-right"></td>
                     </tr>
