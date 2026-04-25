@@ -73,8 +73,8 @@ export function MarketingLayout() {
               </Link>
             ) : (
               <>
-                <Link to="/login" className="text-sm font-medium hover:text-primary transition-colors">Log in</Link>
-                <Link to="/signup" className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors">Get Started</Link>
+                <a href="/api/login" className="text-sm font-medium hover:text-primary transition-colors">Log in</a>
+                <a href="/api/login" className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors">Get Started</a>
               </>
             )}
           </div>

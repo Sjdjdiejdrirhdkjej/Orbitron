@@ -1,19 +1,9 @@
 import type { Express, Request, Response, NextFunction } from "express";
-import bcrypt from "bcryptjs";
 import { randomBytes, createHash } from "node:crypto";
 import { query } from "./db";
+import { isAuthenticated as isReplitAuthenticated } from "./replit_integrations/auth";
 
-const SESSION_COOKIE = "sb_session";
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 const KEY_PREFIX = "sk-sb-v1-";
-
-interface UserRow {
-  id: string;
-  email: string;
-  name: string | null;
-  password_hash: string;
-  created_at: Date;
-}
 
 interface ApiKeyRow {
   id: string;
@@ -26,8 +16,16 @@ interface ApiKeyRow {
   revoked_at: Date | null;
 }
 
+interface AuthUser {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  profileImageUrl: string | null;
+}
+
 export interface AuthContext {
-  user: { id: string; email: string; name: string | null };
+  user: AuthUser;
   via: "session" | "api_key";
   apiKeyId?: string;
 }
@@ -36,67 +34,6 @@ declare module "express-serve-static-core" {
   interface Request {
     auth?: AuthContext;
   }
-}
-
-function parseCookies(header: string | undefined): Record<string, string> {
-  if (!header) return {};
-  const out: Record<string, string> = {};
-  for (const part of header.split(";")) {
-    const idx = part.indexOf("=");
-    if (idx === -1) continue;
-    const k = part.slice(0, idx).trim();
-    const v = part.slice(idx + 1).trim();
-    if (k) out[k] = decodeURIComponent(v);
-  }
-  return out;
-}
-
-function setSessionCookie(res: Response, token: string, expiresAt: Date) {
-  const isProd = process.env.NODE_ENV === "production";
-  const parts = [
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    `Expires=${expiresAt.toUTCString()}`,
-  ];
-  if (isProd) parts.push("Secure");
-  res.setHeader("Set-Cookie", parts.join("; "));
-}
-
-function clearSessionCookie(res: Response) {
-  const isProd = process.env.NODE_ENV === "production";
-  const parts = [
-    `${SESSION_COOKIE}=`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-  ];
-  if (isProd) parts.push("Secure");
-  res.setHeader("Set-Cookie", parts.join("; "));
-}
-
-function publicUser(u: UserRow) {
-  return { id: u.id, email: u.email, name: u.name };
-}
-
-async function getSessionUser(token: string | undefined): Promise<UserRow | null> {
-  if (!token) return null;
-  const result = await query<UserRow & { expires_at: Date }>(
-    `SELECT u.id, u.email, u.name, u.password_hash, u.created_at, s.expires_at
-       FROM sessions s
-       JOIN users u ON u.id = s.user_id
-      WHERE s.token = $1`,
-    [token],
-  );
-  const row = result.rows[0];
-  if (!row) return null;
-  if (new Date(row.expires_at).getTime() < Date.now()) {
-    await query("DELETE FROM sessions WHERE token = $1", [token]);
-    return null;
-  }
-  return row;
 }
 
 function lookupHash(secret: string): string {
@@ -111,11 +48,31 @@ function generateApiKey(): { full: string; prefix: string; lookup: string } {
   return { full, prefix, lookup: lookupHash(full) };
 }
 
-async function getUserFromBearer(token: string): Promise<{ user: UserRow; keyId: string } | null> {
+interface UserLookupRow {
+  id: string;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  profile_image_url: string | null;
+}
+
+function rowToUser(r: UserLookupRow): AuthUser {
+  return {
+    id: r.id,
+    email: r.email,
+    firstName: r.first_name,
+    lastName: r.last_name,
+    profileImageUrl: r.profile_image_url,
+  };
+}
+
+async function getUserFromBearer(
+  token: string,
+): Promise<{ user: AuthUser; keyId: string } | null> {
   if (!token.startsWith(KEY_PREFIX)) return null;
   const lookup = lookupHash(token);
-  const result = await query<UserRow & { key_id: string; revoked_at: Date | null }>(
-    `SELECT u.id, u.email, u.name, u.password_hash, u.created_at,
+  const result = await query<UserLookupRow & { key_id: string; revoked_at: Date | null }>(
+    `SELECT u.id, u.email, u.first_name, u.last_name, u.profile_image_url,
             k.id AS key_id, k.revoked_at
        FROM api_keys k
        JOIN users u ON u.id = k.user_id
@@ -129,22 +86,27 @@ async function getUserFromBearer(token: string): Promise<{ user: UserRow; keyId:
   query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1", [row.key_id]).catch(
     (err) => console.error("Failed to update last_used_at:", err),
   );
-  return {
-    user: {
-      id: row.id,
-      email: row.email,
-      name: row.name,
-      password_hash: row.password_hash,
-      created_at: row.created_at,
-    },
-    keyId: row.key_id,
-  };
+  return { user: rowToUser(row), keyId: row.key_id };
+}
+
+async function getSessionUser(req: Request): Promise<AuthUser | null> {
+  if (!req.isAuthenticated || !req.isAuthenticated()) return null;
+  const claims = (req.user as any)?.claims;
+  const userId = claims?.sub;
+  if (!userId) return null;
+  const result = await query<UserLookupRow>(
+    `SELECT id, email, first_name, last_name, profile_image_url
+       FROM users WHERE id = $1`,
+    [userId],
+  );
+  const row = result.rows[0];
+  return row ? rowToUser(row) : null;
 }
 
 /**
  * Resolve auth from either:
  *   - Authorization: Bearer <api key>
- *   - sb_session cookie
+ *   - Replit Auth session (passport)
  * Sets req.auth on success. Does not reject — that's the caller's job.
  */
 export async function resolveAuth(req: Request): Promise<AuthContext | null> {
@@ -154,24 +116,16 @@ export async function resolveAuth(req: Request): Promise<AuthContext | null> {
     if (token) {
       const result = await getUserFromBearer(token);
       if (result) {
-        return {
-          user: publicUser(result.user),
-          via: "api_key",
-          apiKeyId: result.keyId,
-        };
+        return { user: result.user, via: "api_key", apiKeyId: result.keyId };
       }
       // Bearer was provided but invalid — return null so caller can 401.
       return null;
     }
   }
 
-  const cookies = parseCookies(req.headers.cookie);
-  const sessionToken = cookies[SESSION_COOKIE];
-  if (sessionToken) {
-    const user = await getSessionUser(sessionToken);
-    if (user) {
-      return { user: publicUser(user), via: "session" };
-    }
+  const user = await getSessionUser(req);
+  if (user) {
+    return { user, via: "session" };
   }
   return null;
 }
@@ -183,7 +137,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return res.status(401).json({
       error: {
         message:
-          "Authentication required. Pass a session cookie or 'Authorization: Bearer <api key>' header. Generate a key at /keys.",
+          "Authentication required. Sign in with Replit, or pass 'Authorization: Bearer <api key>'. Generate a key at /keys.",
         type: "unauthorized",
       },
     });
@@ -192,124 +146,22 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
-/** Express middleware: require a session (used for /api/auth/me, /api/keys). */
-export async function requireSession(req: Request, res: Response, next: NextFunction) {
-  const ctx = await resolveAuth(req);
-  if (!ctx || ctx.via !== "session") {
-    return res.status(401).json({
-      error: { message: "You must be signed in.", type: "unauthorized" },
-    });
-  }
-  req.auth = ctx;
-  next();
-}
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-export function registerAuthRoutes(app: Express): void {
-  // POST /api/auth/signup { email, password, name? }
-  app.post("/api/auth/signup", async (req: Request, res: Response) => {
-    try {
-      const { email, password, name } = (req.body || {}) as {
-        email?: string;
-        password?: string;
-        name?: string;
-      };
-      if (!email || typeof email !== "string" || !EMAIL_RE.test(email)) {
-        return res.status(400).json({ error: { message: "A valid email is required." } });
-      }
-      if (!password || typeof password !== "string" || password.length < 8) {
-        return res
-          .status(400)
-          .json({ error: { message: "Password must be at least 8 characters." } });
-      }
-      const cleanEmail = email.trim().toLowerCase();
-      const cleanName = typeof name === "string" ? name.trim().slice(0, 120) || null : null;
-
-      const existing = await query<UserRow>("SELECT id FROM users WHERE email = $1", [cleanEmail]);
-      if (existing.rowCount && existing.rowCount > 0) {
-        return res
-          .status(409)
-          .json({ error: { message: "An account with that email already exists." } });
-      }
-
-      const hash = await bcrypt.hash(password, 12);
-      const result = await query<UserRow>(
-        `INSERT INTO users (email, name, password_hash)
-         VALUES ($1, $2, $3)
-         RETURNING id, email, name, password_hash, created_at`,
-        [cleanEmail, cleanName, hash],
-      );
-      const user = result.rows[0];
-
-      const token = randomBytes(32).toString("base64url");
-      const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-      await query("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)", [
-        token,
-        user.id,
-        expiresAt,
-      ]);
-      setSessionCookie(res, token, expiresAt);
-      res.status(201).json({ user: publicUser(user) });
-    } catch (err) {
-      console.error("signup error:", err);
-      res.status(500).json({ error: { message: "Failed to create account." } });
+/**
+ * Express middleware: require a Replit Auth session (used for /api/keys).
+ * Wraps Replit Auth's `isAuthenticated` (which handles token refresh) and then
+ * loads the database user record into req.auth.
+ */
+export function requireSession(req: Request, res: Response, next: NextFunction) {
+  isReplitAuthenticated(req, res, async (err?: unknown) => {
+    if (err) return next(err);
+    const user = await getSessionUser(req);
+    if (!user) {
+      return res.status(401).json({
+        error: { message: "You must be signed in.", type: "unauthorized" },
+      });
     }
-  });
-
-  // POST /api/auth/login { email, password }
-  app.post("/api/auth/login", async (req: Request, res: Response) => {
-    try {
-      const { email, password } = (req.body || {}) as { email?: string; password?: string };
-      if (!email || !password) {
-        return res.status(400).json({ error: { message: "Email and password required." } });
-      }
-      const cleanEmail = String(email).trim().toLowerCase();
-      const result = await query<UserRow>(
-        "SELECT id, email, name, password_hash, created_at FROM users WHERE email = $1",
-        [cleanEmail],
-      );
-      const user = result.rows[0];
-      // Always run bcrypt to avoid timing leaks.
-      const ok = user
-        ? await bcrypt.compare(password, user.password_hash)
-        : await bcrypt.compare(password, "$2a$12$invalidhashinvalidhashinvalidhashinvalidhashinvalidhash");
-      if (!user || !ok) {
-        return res.status(401).json({ error: { message: "Invalid email or password." } });
-      }
-      const token = randomBytes(32).toString("base64url");
-      const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-      await query("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)", [
-        token,
-        user.id,
-        expiresAt,
-      ]);
-      setSessionCookie(res, token, expiresAt);
-      res.json({ user: publicUser(user) });
-    } catch (err) {
-      console.error("login error:", err);
-      res.status(500).json({ error: { message: "Failed to sign in." } });
-    }
-  });
-
-  // POST /api/auth/logout
-  app.post("/api/auth/logout", async (req: Request, res: Response) => {
-    const cookies = parseCookies(req.headers.cookie);
-    const token = cookies[SESSION_COOKIE];
-    if (token) {
-      await query("DELETE FROM sessions WHERE token = $1", [token]).catch(() => undefined);
-    }
-    clearSessionCookie(res);
-    res.json({ ok: true });
-  });
-
-  // GET /api/auth/me
-  app.get("/api/auth/me", async (req: Request, res: Response) => {
-    const ctx = await resolveAuth(req);
-    if (!ctx || ctx.via !== "session") {
-      return res.status(401).json({ error: { message: "Not signed in." } });
-    }
-    res.json({ user: ctx.user });
+    req.auth = { user, via: "session" };
+    next();
   });
 }
 
@@ -396,4 +248,3 @@ export function registerKeyRoutes(app: Express): void {
     res.json({ ok: true });
   });
 }
-

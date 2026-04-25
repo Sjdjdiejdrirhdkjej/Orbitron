@@ -22,37 +22,65 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
 }
 
 /**
- * Ensure the schema needed by the auth + key flows exists.
- * Called once at server startup so a fresh environment can sign up immediately
- * without manual migration steps. All statements use IF NOT EXISTS, so it is
- * safe to run on every boot.
+ * Ensure the schema needed by Replit Auth + the API key flow exists.
+ * Called once at server startup so a fresh environment can sign in immediately
+ * without manual migration steps.
+ *
+ * Replit Auth requires:
+ *   - users(id varchar PK, email, first_name, last_name, profile_image_url, created_at, updated_at)
+ *   - sessions(sid varchar PK, sess jsonb, expire timestamp) with expire index
+ *
+ * On first boot we drop any pre-existing legacy email/password users + sessions
+ * tables (Switchboard previously had its own auth) so they can be recreated to
+ * match the Replit Auth shape. api_keys is dropped along with them because its
+ * user_id column referenced the old UUID primary key.
  */
 export async function ensureSchema(): Promise<void> {
+  // One-time migration off the legacy email/password auth schema. The legacy
+  // users table had a NOT NULL `password_hash` column that Replit Auth doesn't
+  // populate — that's our signal to drop and recreate.
+  const legacy = await pool.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name = 'password_hash'
+     ) AS exists`,
+  );
+  if (legacy.rows[0]?.exists) {
+    console.log("[db] Migrating legacy email/password auth schema → Replit Auth schema");
+    await pool.query(`
+      DROP TABLE IF EXISTS api_keys CASCADE;
+      DROP TABLE IF EXISTS sessions CASCADE;
+      DROP TABLE IF EXISTS users CASCADE;
+    `);
+  }
+
   await pool.query(`
-    -- gen_random_uuid() is in core Postgres 13+, but pgcrypto guarantees it on
-    -- older builds and is a no-op everywhere else.
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+    -- Replit Auth users table. id is the OIDC subject claim (string).
     CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      email TEXT UNIQUE NOT NULL,
-      name TEXT,
-      password_hash TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      email VARCHAR UNIQUE,
+      first_name VARCHAR,
+      last_name VARCHAR,
+      profile_image_url VARCHAR,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
     );
 
+    -- Session store for connect-pg-simple. Schema is mandated by the library.
     CREATE TABLE IF NOT EXISTS sessions (
-      token TEXT PRIMARY KEY,
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      expires_at TIMESTAMPTZ NOT NULL
+      sid VARCHAR PRIMARY KEY,
+      sess JSONB NOT NULL,
+      expire TIMESTAMP NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
-    CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON sessions(expire);
 
     CREATE TABLE IF NOT EXISTS api_keys (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       prefix TEXT NOT NULL,
       lookup_hash TEXT NOT NULL UNIQUE,
@@ -68,7 +96,7 @@ export async function ensureSchema(): Promise<void> {
 /** Best-effort cleanup of expired session rows. Safe to call periodically. */
 export async function purgeExpiredSessions(): Promise<void> {
   try {
-    await pool.query("DELETE FROM sessions WHERE expires_at < NOW()");
+    await pool.query("DELETE FROM sessions WHERE expire < NOW()");
   } catch (err) {
     console.error("purgeExpiredSessions failed:", err);
   }

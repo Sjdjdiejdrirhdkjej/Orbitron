@@ -8,9 +8,9 @@ A multi-model LLM gateway UI (think OpenRouter), branded **Switchboard**. One AP
 - **Backend**: Express (`tsx server/index.ts`) running Vite as middleware on port 5000
 - **Providers**: OpenAI, Anthropic, Google Gemini via Replit AI Integrations (no API keys required)
 - **Database**: Replit Postgres (raw `pg` driver) — `users`, `sessions`, `api_keys` tables
-- **Auth**: Email + password (bcryptjs), opaque session tokens stored in DB and delivered as
-  HttpOnly `sb_session` cookie. Personal API keys hashed with SHA-256 (only the prefix is stored
-  in plaintext for display).
+- **Auth**: **Replit Auth** (OIDC / "Log In with Replit") via `openid-client` + `passport` +
+  `express-session`, with sessions persisted in Postgres through `connect-pg-simple`. Personal
+  API keys hashed with SHA-256 (only the prefix is stored in plaintext for display).
 
 ## Run
 
@@ -18,9 +18,13 @@ A multi-model LLM gateway UI (think OpenRouter), branded **Switchboard**. One AP
 
 ## Routes
 
-Marketing (top nav + footer): `/`, `/models`, `/models/:id`, `/pricing`, `/docs`, `/login`, `/signup`, `*` (404)
+Marketing (top nav + footer): `/`, `/models`, `/models/:id`, `/pricing`, `/docs`, `*` (404)
 
 App (sidebar shell): `/chat`, `/keys`, `/usage`, `/credits`, `/settings`
+
+Auth: `/login` and `/signup` are kept as legacy SPA routes that auto-redirect to `/api/login`
+(the Replit Auth flow). The marketing header's "Log in" / "Get Started" buttons and the
+`AppLayout` redirect-when-unauthenticated all point at `/api/login`.
 
 Global: Cmd/Ctrl+K opens a model search palette.
 
@@ -35,23 +39,53 @@ The route in `server/chat.ts` maps the catalog model id to the real provider mod
 
 ## Auth & API Keys
 
-**Database tables** (created via raw SQL, no ORM):
-- `users` — id (UUID), email (unique), name, password_hash (bcrypt), created_at
-- `sessions` — token (PK), user_id, expires_at — 30-day TTL
-- `api_keys` — id (UUID), user_id, name, prefix (`sk-sb-v1-XXXXXX`), lookup_hash (sha256 of full key, unique), monthly_cap_cents, created_at, last_used_at, revoked_at
+**Replit Auth (OIDC)** is provided by the `server/replit_integrations/auth/` module:
+- `replitAuth.ts` — wires `passport`, `express-session`, and `openid-client` against
+  `https://replit.com/oidc`. Registers `/api/login`, `/api/callback`, `/api/logout` and
+  exports the `isAuthenticated` middleware (which transparently refreshes expired
+  access tokens via the stored refresh token).
+- `storage.ts` — raw-`pg` repo with `getUser(id)` and `upsertUser(...)`. The OIDC
+  `verify` callback upserts the user on every login so name/email/avatar stay in sync.
+- `routes.ts` — exposes `GET /api/auth/user` (returns the current user, 401 if not
+  signed in).
 
-**Endpoints** (`server/auth.ts`):
-- `POST /api/auth/signup { email, password, name? }` → 201 + sets `sb_session` cookie
-- `POST /api/auth/login { email, password }` → sets cookie
-- `POST /api/auth/logout` → clears cookie + deletes session row
-- `GET  /api/auth/me` → `{ user }` for current session, 401 otherwise
-- `GET  /api/keys` (session) → list of the current user's keys (prefix only, never the secret)
-- `POST /api/keys { name, monthlyCapCents? }` → returns the **full key once** in `{ key, record }`
+**Database tables** (created via raw SQL in `server/db.ts`, no ORM):
+- `users` — id (VARCHAR PK = OIDC `sub` claim), email, first_name, last_name,
+  profile_image_url, created_at, updated_at
+- `sessions` — sid (PK), sess (jsonb), expire (timestamp) + `IDX_session_expire` —
+  schema mandated by `connect-pg-simple`
+- `api_keys` — id (UUID), user_id (VARCHAR → `users.id`), name, prefix
+  (`sk-sb-v1-XXXXXX`), lookup_hash (sha256 of full key, unique), monthly_cap_cents,
+  created_at, last_used_at, revoked_at
+
+On startup `ensureSchema()` detects the legacy email/password tables (by looking for
+the `users.password_hash` column) and drops `users` / `sessions` / `api_keys` so the
+new schema can be created cleanly. New environments are unaffected.
+
+**Switchboard endpoints** (`server/auth.ts`):
+- `GET  /api/auth/user` — current Replit-authenticated user, 401 otherwise
+- `GET  /api/login`, `/api/logout`, `/api/callback` — Replit Auth OIDC flow
+- `GET  /api/keys` (session) → list of the current user's keys (prefix only)
+- `POST /api/keys { name, monthlyCapCents? }` → returns the **full key once** in
+  `{ key, record }`
 - `DELETE /api/keys/:id` → soft-revoke (sets `revoked_at`)
 
-**Auth middleware** (`requireAuth`) is applied to `/api/chat` and `/api/images`. It accepts either a valid session cookie or an `Authorization: Bearer sk-sb-v1-…` header. The catalog endpoints (`/api/models`, `/api/status`) remain public so the marketing pages keep working. Bearer hits update `last_used_at` asynchronously.
+**Auth middleware**:
+- `requireAuth` (in `server/auth.ts`) is applied to `/api/chat` and `/api/images`. It
+  accepts either a Replit Auth session **or** an `Authorization: Bearer sk-sb-v1-…`
+  header. Bearer hits update `last_used_at` asynchronously.
+- `requireSession` wraps Replit Auth's `isAuthenticated` and then loads the DB user
+  into `req.auth`. Used by the `/api/keys` endpoints.
 
-The frontend uses an `AuthProvider` (`src/lib/auth.tsx`) that calls `/api/auth/me` on mount and exposes `useAuth()`. `AppLayout` redirects to `/login` when unauthenticated and the marketing header swaps the "Get Started" CTA for "Open Dashboard" when signed in.
+The catalog endpoints (`/api/models`, `/api/status`) remain public so the marketing
+pages keep working.
+
+The frontend uses an `AuthProvider` (`src/lib/auth.tsx`) that calls `/api/auth/user`
+on mount and exposes `useAuth()` returning `{ user, loading, login(), logout(), refresh() }`.
+`login()` and `logout()` redirect to `/api/login` and `/api/logout` respectively.
+`AppLayout` shows the user's avatar (or initials), name, and email in the sidebar.
+The marketing header swaps the "Log in" / "Get Started" CTAs for "Open Dashboard"
+when signed in.
 
 ## REST API
 

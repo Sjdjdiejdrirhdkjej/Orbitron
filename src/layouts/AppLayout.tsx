@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { Outlet, Link, useLocation, Navigate, useNavigate } from "react-router-dom";
+import { Outlet, Link, useLocation, Navigate } from "react-router-dom";
 import { MessageSquare, Cpu, Key, BarChart2, CreditCard, Settings, Menu, X, Image as ImageIcon, LogOut } from "lucide-react";
-import { useAuth } from "../lib/auth";
+import { useAuth, displayNameFor, initialsFor } from "../lib/auth";
 
 export function AppLayout() {
   const location = useLocation();
-  const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { user, loading, logout } = useAuth();
 
@@ -25,18 +24,12 @@ export function AppLayout() {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
-  const initials =
-    (user.name || user.email)
-      .split(/[\s@]+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((p) => p[0]?.toUpperCase())
-      .join("") || "U";
-  const displayName = user.name || user.email.split("@")[0];
+  const initials = initialsFor(user);
+  const displayName = displayNameFor(user);
+  const emailLine = user.email || "Signed in via Replit";
 
-  const handleLogout = async () => {
-    await logout();
-    navigate("/", { replace: true });
+  const handleLogout = () => {
+    logout();
   };
 
   const navItems = [
@@ -100,10 +93,21 @@ export function AppLayout() {
 
       <div className="p-4 border-t border-border">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-accent grid place-items-center font-mono text-xs shrink-0">{initials}</div>
+          {user.profileImageUrl ? (
+            <img
+              src={user.profileImageUrl}
+              alt=""
+              className="w-8 h-8 rounded-full bg-accent object-cover shrink-0"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-accent grid place-items-center font-mono text-xs shrink-0">
+              {initials}
+            </div>
+          )}
           <div className="flex flex-col min-w-0 flex-1">
             <span className="text-sm font-medium truncate">{displayName}</span>
-            <span className="text-xs text-muted-foreground font-mono truncate">{user.email}</span>
+            <span className="text-xs text-muted-foreground font-mono truncate">{emailLine}</span>
           </div>
           <button
             onClick={handleLogout}

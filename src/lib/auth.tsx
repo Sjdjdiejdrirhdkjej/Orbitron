@@ -9,37 +9,23 @@ import React, {
 
 export interface AuthUser {
   id: string;
-  email: string;
-  name: string | null;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  profileImageUrl: string | null;
 }
 
 interface AuthState {
   user: AuthUser | null;
   loading: boolean;
-  signup(input: { email: string; password: string; name?: string }): Promise<void>;
-  login(input: { email: string; password: string }): Promise<void>;
-  logout(): Promise<void>;
+  /** Redirects to the Replit Auth login flow. */
+  login(): void;
+  /** Redirects to the Replit Auth logout flow. */
+  logout(): void;
   refresh(): Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
-
-async function jsonOrThrow(res: Response): Promise<unknown> {
-  const text = await res.text();
-  let parsed: unknown = null;
-  try {
-    parsed = text ? JSON.parse(text) : null;
-  } catch {
-    /* ignore */
-  }
-  if (!res.ok) {
-    const message =
-      (parsed as { error?: { message?: string } } | null)?.error?.message ||
-      `Request failed (${res.status})`;
-    throw new Error(message);
-  }
-  return parsed;
-}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -47,10 +33,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/auth/me", { credentials: "include" });
+      const res = await fetch("/api/auth/user", { credentials: "include" });
       if (res.ok) {
-        const data = (await res.json()) as { user: AuthUser };
-        setUser(data.user);
+        const data = (await res.json()) as AuthUser;
+        setUser(data);
       } else {
         setUser(null);
       }
@@ -65,42 +51,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  const signup = useCallback(
-    async (input: { email: string; password: string; name?: string }) => {
-      const res = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(input),
-      });
-      const data = (await jsonOrThrow(res)) as { user: AuthUser };
-      setUser(data.user);
-    },
-    [],
-  );
-
-  const login = useCallback(async (input: { email: string; password: string }) => {
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(input),
-    });
-    const data = (await jsonOrThrow(res)) as { user: AuthUser };
-    setUser(data.user);
+  const login = useCallback(() => {
+    window.location.href = "/api/login";
   }, []);
 
-  const logout = useCallback(async () => {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-    }).catch(() => undefined);
-    setUser(null);
+  const logout = useCallback(() => {
+    window.location.href = "/api/logout";
   }, []);
 
   const value = useMemo<AuthState>(
-    () => ({ user, loading, signup, login, logout, refresh }),
-    [user, loading, signup, login, logout, refresh],
+    () => ({ user, loading, login, logout, refresh }),
+    [user, loading, login, logout, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -110,4 +71,22 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
   return ctx;
+}
+
+/** Convenience helper: a friendly display name for the user. */
+export function displayNameFor(user: AuthUser): string {
+  const full = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+  if (full) return full;
+  if (user.email) return user.email.split("@")[0];
+  return "Account";
+}
+
+export function initialsFor(user: AuthUser): string {
+  const f = (user.firstName?.[0] || "").toUpperCase();
+  const l = (user.lastName?.[0] || "").toUpperCase();
+  if (f || l) return `${f}${l}` || f || l || "U";
+  if (user.email) {
+    return user.email.slice(0, 2).toUpperCase();
+  }
+  return "U";
 }
