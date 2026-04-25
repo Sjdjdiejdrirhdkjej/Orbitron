@@ -37,6 +37,8 @@ The route in `server/chat.ts` maps the catalog model id to the real provider mod
 
 `POST /api/images` — generate an image with OpenAI `gpt-image-1`. Body: `{ prompt: string, size?: "1024x1024"|"1024x1536"|"1536x1024"|"auto", n?: 1..4 }`. Returns `{ model, latencyMs, data: [{ b64_json, revised_prompt }] }`.
 
+`GET /api/status` — pings every provider in parallel with a 1-token completion (the proxy's `/models` list returns 405, so we use generation calls). Server-cached for 30s. Returns `{ status: "operational"|"degraded"|"down", checkedAt, providers: [{ name, status, latencyMs, error? }] }`. The marketing header pill and `/status` page consume this.
+
 Both endpoints live in `server/api.ts` and are registered alongside the chat route in `server/index.ts`.
 
 ### Catalog → real model mapping
@@ -64,7 +66,7 @@ Every catalog entry maps 1:1 to a real, currently-supported model on the AI Inte
 server/
   index.ts               Express + Vite middleware, port 5000
   chat.ts                /api/chat — provider routing + SSE streaming
-  api.ts                 /api/models, /api/models/:id, /api/images
+  api.ts                 /api/status, /api/models, /api/models/:id, /api/images
 src/
   App.tsx                Routes + Cmd+K palette
   main.tsx               BrowserRouter entry

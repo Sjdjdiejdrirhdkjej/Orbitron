@@ -1,8 +1,40 @@
+import { useEffect, useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-import { Activity } from "lucide-react";
+
+type AggregateStatus = "operational" | "degraded" | "down" | "loading";
+
+const PILL_META: Record<AggregateStatus, { dot: string; label: string }> = {
+  operational: { dot: "bg-green-500", label: "All systems operational" },
+  degraded: { dot: "bg-yellow-500", label: "Degraded performance" },
+  down: { dot: "bg-red-500", label: "Major outage" },
+  loading: { dot: "bg-muted-foreground/40 animate-pulse", label: "Checking status…" },
+};
 
 export function MarketingLayout() {
   const location = useLocation();
+  const [systemStatus, setSystemStatus] = useState<AggregateStatus>("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/status", { cache: "no-store" });
+        if (!res.ok) throw new Error();
+        const data = (await res.json()) as { status: AggregateStatus };
+        if (!cancelled) setSystemStatus(data.status);
+      } catch {
+        if (!cancelled) setSystemStatus("down");
+      }
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const pill = PILL_META[systemStatus];
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -22,10 +54,14 @@ export function MarketingLayout() {
             </nav>
           </div>
           <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-muted-foreground border border-border rounded-full px-3 py-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              All systems operational
-            </div>
+            <Link
+              to="/status"
+              className="hidden sm:flex items-center gap-2 text-xs font-mono text-muted-foreground border border-border rounded-full px-3 py-1 hover:text-foreground hover:border-foreground/30 transition-colors"
+              title="View detailed status"
+            >
+              <div className={`w-1.5 h-1.5 rounded-full ${pill.dot}`} />
+              {pill.label}
+            </Link>
             <Link to="/login" className="text-sm font-medium hover:text-primary transition-colors">Log in</Link>
             <Link to="/chat" className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors">Get Started</Link>
           </div>
@@ -63,6 +99,7 @@ export function MarketingLayout() {
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li><Link to="#" className="hover:text-foreground">Privacy Policy</Link></li>
               <li><Link to="#" className="hover:text-foreground">Terms of Service</Link></li>
+              <li><Link to="/status" className="hover:text-foreground">Status</Link></li>
               <li><Link to="#" className="hover:text-foreground">Security</Link></li>
             </ul>
           </div>

@@ -13,6 +13,7 @@ import Credits from "./pages/Credits";
 import Settings from "./pages/Settings";
 import Pricing from "./pages/Pricing";
 import Docs from "./pages/Docs";
+import Status from "./pages/Status";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import NotFound from "./pages/NotFound";
@@ -102,6 +103,7 @@ export default function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/status" element={<Status />} />
           <Route path="*" element={<NotFound />} />
         </Route>
         <Route element={<AppLayout />}>

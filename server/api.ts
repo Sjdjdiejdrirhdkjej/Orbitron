@@ -1,11 +1,65 @@
 import type { Express, Request, Response } from "express";
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import { models as catalog, providers } from "../src/data/models";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
+
+const anthropic = new Anthropic({
+  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+});
+
+const gemini = new GoogleGenAI({
+  apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+  httpOptions: {
+    apiVersion: "",
+    baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+  },
+});
+
+interface ProviderStatus {
+  name: string;
+  status: "operational" | "degraded" | "down";
+  latencyMs: number;
+  error?: string;
+}
+
+async function pingProvider(
+  name: string,
+  fn: () => Promise<unknown>,
+  timeoutMs = 8000,
+): Promise<ProviderStatus> {
+  const start = Date.now();
+  try {
+    await Promise.race([
+      fn(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs),
+      ),
+    ]);
+    const latencyMs = Date.now() - start;
+    return {
+      name,
+      status: latencyMs > 3000 ? "degraded" : "operational",
+      latencyMs,
+    };
+  } catch (err) {
+    return {
+      name,
+      status: "down",
+      latencyMs: Date.now() - start,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+let statusCache: { data: unknown; expires: number } | null = null;
+const STATUS_TTL_MS = 30_000;
 
 interface ImageBody {
   prompt: string;
@@ -14,6 +68,54 @@ interface ImageBody {
 }
 
 export function registerApiRoutes(app: Express): void {
+  // GET /api/status — ping each provider and report aggregate + per-provider health.
+  // Cached for 30s on the server to avoid hammering provider list endpoints.
+  app.get("/api/status", async (_req: Request, res: Response) => {
+    if (statusCache && statusCache.expires > Date.now()) {
+      return res.json(statusCache.data);
+    }
+
+    // The Replit AI proxy only exposes generation endpoints — /models lists return 405.
+    // Use minimal completion calls as health probes (cents-scale cost, cached 30s).
+    const providerResults = await Promise.all([
+      pingProvider("OpenAI", () =>
+        openai.chat.completions.create({
+          model: "gpt-5-nano",
+          messages: [{ role: "user", content: "ping" }],
+          max_completion_tokens: 16,
+        }),
+      ),
+      pingProvider("Anthropic", () =>
+        anthropic.messages.create({
+          model: "claude-haiku-4-5",
+          max_tokens: 1,
+          messages: [{ role: "user", content: "ping" }],
+        }),
+      ),
+      pingProvider("Google", () =>
+        gemini.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: [{ role: "user", parts: [{ text: "ping" }] }],
+          config: { maxOutputTokens: 1 },
+        }),
+      ),
+    ]);
+
+    const down = providerResults.filter((p) => p.status === "down").length;
+    const degraded = providerResults.filter((p) => p.status === "degraded").length;
+    const aggregate: "operational" | "degraded" | "down" =
+      down === providerResults.length ? "down" : down + degraded > 0 ? "degraded" : "operational";
+
+    const payload = {
+      status: aggregate,
+      checkedAt: new Date().toISOString(),
+      providers: providerResults,
+    };
+
+    statusCache = { data: payload, expires: Date.now() + STATUS_TTL_MS };
+    res.json(payload);
+  });
+
   // GET /api/models — list every model in the catalog with optional ?provider= filter
   app.get("/api/models", (req: Request, res: Response) => {
     const providerFilter = typeof req.query.provider === "string" ? req.query.provider : null;
