@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
+import { gotoAuth } from "../lib/auth";
 
 /**
  * Replit Auth handles the actual login flow at /api/login.
@@ -9,7 +10,7 @@ import { Link } from "react-router-dom";
 export default function Login() {
   useEffect(() => {
     const t = window.setTimeout(() => {
-      window.location.href = "/api/login";
+      gotoAuth("/api/login");
     }, 250);
     return () => window.clearTimeout(t);
   }, []);
@@ -30,6 +31,10 @@ export default function Login() {
 
         <a
           href="/api/login"
+          onClick={(e) => {
+            e.preventDefault();
+            gotoAuth("/api/login");
+          }}
           className="w-full h-10 inline-flex items-center justify-center bg-foreground text-background rounded-md text-sm font-medium hover:bg-foreground/90 transition-colors"
         >
           Continue with Replit

@@ -27,6 +27,28 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/**
+ * Navigate to a Replit Auth endpoint without leaking a window.opener reference.
+ *
+ * If the current tab was opened from another window (e.g. the Replit
+ * workspace's "Open in new tab" button on the preview pane), `window.opener`
+ * will be set. Replit's OIDC consent page detects that and calls
+ * `window.close()` after the user authorizes — which closes the user's app
+ * tab instead of returning control to it. Disconnecting the opener before
+ * navigating prevents that auto-close behaviour.
+ */
+export function gotoAuth(path: "/api/login" | "/api/logout"): void {
+  try {
+    if (window.opener) {
+      // Some browsers make this a no-op for cross-origin openers; that's fine.
+      (window as any).opener = null;
+    }
+  } catch {
+    // ignore — best-effort
+  }
+  window.location.href = path;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,11 +74,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const login = useCallback(() => {
-    window.location.href = "/api/login";
+    gotoAuth("/api/login");
   }, []);
 
   const logout = useCallback(() => {
-    window.location.href = "/api/logout";
+    gotoAuth("/api/logout");
   }, []);
 
   const value = useMemo<AuthState>(

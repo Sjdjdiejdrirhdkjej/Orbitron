@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-import { useAuth } from "../lib/auth";
+import { useAuth, gotoAuth } from "../lib/auth";
 
 type AggregateStatus = "operational" | "degraded" | "down" | "loading";
 
@@ -73,8 +73,26 @@ export function MarketingLayout() {
               </Link>
             ) : (
               <>
-                <a href="/api/login" className="text-sm font-medium hover:text-primary transition-colors">Log in</a>
-                <a href="/api/login" className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors">Get Started</a>
+                <a
+                  href="/api/login"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    gotoAuth("/api/login");
+                  }}
+                  className="text-sm font-medium hover:text-primary transition-colors"
+                >
+                  Log in
+                </a>
+                <a
+                  href="/api/login"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    gotoAuth("/api/login");
+                  }}
+                  className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors"
+                >
+                  Get Started
+                </a>
               </>
             )}
           </div>
