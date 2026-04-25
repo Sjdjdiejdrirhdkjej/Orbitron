@@ -18,35 +18,35 @@ export default function Keys() {
   };
 
   return (
-    <div className="flex flex-col h-full animate-fade-in p-8 overflow-y-auto">
-      <div className="flex items-center justify-between mb-8">
+    <div className="flex flex-col h-full animate-fade-in p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">API Keys</h1>
-          <p className="text-muted-foreground font-mono text-sm mt-1">Manage your access keys and limits.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">API Keys</h1>
+          <p className="text-muted-foreground font-mono text-xs sm:text-sm mt-1">Manage your access keys and limits.</p>
         </div>
         <button 
           onClick={() => setIsModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-foreground text-background rounded-md font-medium text-sm hover:bg-foreground/90 transition-colors"
+          className="flex items-center justify-center gap-2 px-4 py-2 bg-foreground text-background rounded-md font-medium text-sm hover:bg-foreground/90 transition-colors w-full sm:w-auto"
         >
           <Plus className="w-4 h-4" /> Create Key
         </button>
       </div>
 
-      <div className="border border-border rounded-lg overflow-hidden bg-card">
-        <table className="w-full text-sm text-left">
+      <div className="border border-border rounded-lg overflow-hidden bg-card overflow-x-auto">
+        <table className="w-full text-sm text-left min-w-[640px]">
           <thead className="bg-muted/30 text-muted-foreground font-mono text-xs uppercase">
             <tr>
-              <th className="px-6 py-4 font-medium">Name & Prefix</th>
-              <th className="px-6 py-4 font-medium">Created</th>
-              <th className="px-6 py-4 font-medium">Last Used</th>
-              <th className="px-6 py-4 font-medium text-right">30d Spend</th>
-              <th className="px-6 py-4 font-medium"></th>
+              <th className="px-4 sm:px-6 py-4 font-medium">Name & Prefix</th>
+              <th className="px-4 sm:px-6 py-4 font-medium">Created</th>
+              <th className="px-4 sm:px-6 py-4 font-medium">Last Used</th>
+              <th className="px-4 sm:px-6 py-4 font-medium text-right">30d Spend</th>
+              <th className="px-4 sm:px-6 py-4 font-medium"></th>
             </tr>
           </thead>
           <tbody className="divide-y border-border">
             {keys.map((key) => (
               <tr key={key.id} className="hover:bg-muted/10 transition-colors">
-                <td className="px-6 py-4">
+                <td className="px-4 sm:px-6 py-4">
                   <div className="font-medium text-foreground mb-1">{key.name}</div>
                   <div className="flex items-center gap-2 text-muted-foreground font-mono text-xs">
                     {key.prefix}
@@ -55,13 +55,13 @@ export default function Keys() {
                     </button>
                   </div>
                 </td>
-                <td className="px-6 py-4 text-muted-foreground font-mono text-xs">{key.created}</td>
-                <td className="px-6 py-4 text-muted-foreground font-mono text-xs">{key.lastUsed}</td>
-                <td className="px-6 py-4 text-right font-mono">
+                <td className="px-4 sm:px-6 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">{key.created}</td>
+                <td className="px-4 sm:px-6 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">{key.lastUsed}</td>
+                <td className="px-4 sm:px-6 py-4 text-right font-mono whitespace-nowrap">
                   <div className="text-foreground">${key.spend.toFixed(2)}</div>
                   <div className="text-muted-foreground text-xs">/ ${key.cap} cap</div>
                 </td>
-                <td className="px-6 py-4 text-right">
+                <td className="px-4 sm:px-6 py-4 text-right">
                   <button className="text-muted-foreground hover:text-foreground p-1">
                     <MoreVertical className="w-4 h-4" />
                   </button>

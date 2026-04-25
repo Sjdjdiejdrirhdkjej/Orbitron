@@ -3,31 +3,31 @@ import { models } from "../data/models";
 
 export default function Usage() {
   return (
-    <div className="flex flex-col h-full animate-fade-in p-8 overflow-y-auto">
-      <div className="flex items-center justify-between mb-8">
+    <div className="flex flex-col h-full animate-fade-in p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 sm:mb-8">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Usage</h1>
-          <p className="text-muted-foreground font-mono text-sm mt-1">Analytics across all your keys and models.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Usage</h1>
+          <p className="text-muted-foreground font-mono text-xs sm:text-sm mt-1">Analytics across all your keys and models.</p>
         </div>
-        <select className="bg-background border border-border rounded-md px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary">
+        <select className="bg-background border border-border rounded-md px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary w-full sm:w-auto">
           <option>Last 30 Days</option>
           <option>Last 7 Days</option>
           <option>Last 24 Hours</option>
         </select>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
         {[
           { label: "Total Spend", value: "$412.50", change: "+12%" },
           { label: "Requests", value: "245,091", change: "+5%" },
           { label: "Tokens Processed", value: "84.2M", change: "+18%" },
           { label: "Error Rate", value: "0.04%", change: "-0.01%" },
         ].map(stat => (
-          <div key={stat.label} className="p-5 border border-border rounded-lg bg-card">
-            <div className="text-sm font-mono text-muted-foreground mb-2">{stat.label}</div>
-            <div className="flex items-end justify-between">
-              <div className="text-2xl font-bold font-mono">{stat.value}</div>
-              <div className={`text-xs font-mono ${stat.change.startsWith('+') && stat.label !== "Error Rate" ? 'text-green-400' : stat.label === "Error Rate" ? 'text-green-400' : 'text-red-400'}`}>
+          <div key={stat.label} className="p-4 sm:p-5 border border-border rounded-lg bg-card">
+            <div className="text-xs sm:text-sm font-mono text-muted-foreground mb-2">{stat.label}</div>
+            <div className="flex items-end justify-between gap-2">
+              <div className="text-xl sm:text-2xl font-bold font-mono truncate">{stat.value}</div>
+              <div className={`text-xs font-mono shrink-0 ${stat.change.startsWith('+') && stat.label !== "Error Rate" ? 'text-green-400' : stat.label === "Error Rate" ? 'text-green-400' : 'text-red-400'}`}>
                 {stat.change}
               </div>
             </div>
@@ -51,7 +51,7 @@ export default function Usage() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-8">
+      <div className="grid lg:grid-cols-2 gap-6 sm:gap-8">
         <div>
           <h3 className="font-medium mb-4">Top Models by Spend</h3>
           <div className="space-y-4">

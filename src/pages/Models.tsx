@@ -12,16 +12,16 @@ export default function Models() {
 
   return (
     <div className="flex flex-col h-full animate-fade-in">
-      <header className="px-8 py-6 border-b border-border bg-card">
-        <h1 className="text-3xl font-bold tracking-tight mb-2">Model Catalog</h1>
-        <p className="text-muted-foreground font-mono text-sm max-w-2xl">
+      <header className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 border-b border-border bg-card">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">Model Catalog</h1>
+        <p className="text-muted-foreground font-mono text-xs sm:text-sm max-w-2xl">
           Browse {models.length} frontier models available through Switchboard. Prices are per 1 million tokens.
         </p>
       </header>
       
-      <div className="flex-1 overflow-auto p-8 bg-muted/10">
-        <div className="flex items-center justify-between mb-6">
-          <div className="relative w-72">
+      <div className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8 bg-muted/10">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+          <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input 
               type="text" 
@@ -32,11 +32,11 @@ export default function Models() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <button className="flex items-center gap-2 px-3 py-2 bg-background border border-border rounded-md font-mono text-sm hover:bg-accent transition-colors">
+            <button className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-background border border-border rounded-md font-mono text-sm hover:bg-accent transition-colors">
               <Filter className="w-4 h-4" /> Provider
             </button>
-            <button className="flex items-center gap-2 px-3 py-2 bg-background border border-border rounded-md font-mono text-sm hover:bg-accent transition-colors">
-              <ArrowUpDown className="w-4 h-4" /> Sort by Price
+            <button className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-background border border-border rounded-md font-mono text-sm hover:bg-accent transition-colors">
+              <ArrowUpDown className="w-4 h-4" /> <span className="hidden sm:inline">Sort by</span> Price
             </button>
           </div>
         </div>

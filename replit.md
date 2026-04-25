@@ -1,59 +1,76 @@
-# Switchboard — LLM Router UI Scaffold
+# Switchboard — LLM Router UI
 
-A frontend-only UI scaffold for a multi-model LLM gateway (think OpenRouter), branded as **Switchboard**. It pitches itself as one API key for every frontier model, billed per token at transparent prices. Everything is mocked — no backend, no real billing, no real inference.
+A multi-model LLM gateway UI (think OpenRouter), branded **Switchboard**. One API key for every closed-source frontier model from OpenAI, Anthropic, and Google, billed per token at transparent prices. The Chat playground streams real responses through Replit's managed AI Integrations; the rest of the dashboard (keys, usage, credits) is realistic mock data.
 
 ## Stack
 
-- React 18 + TypeScript + Vite
-- Tailwind CSS
-- React Router v6
-- lucide-react for icons
-- All data is local (`src/data/models.ts`); all interactions are stubbed in component state.
+- **Frontend**: React 18 + TypeScript + Vite + Tailwind + React Router v6 + lucide-react
+- **Backend**: Express (`tsx server/index.ts`) running Vite as middleware on port 5000
+- **Providers**: OpenAI, Anthropic, Google Gemini via Replit AI Integrations (no API keys required)
 
 ## Run
 
-The `Start application` workflow runs `npm run dev` on port 5000 with HMR.
+`Start application` workflow runs `npm run dev` → `tsx server/index.ts`. Single port (5000) serves both the API and the Vite dev frontend with HMR.
 
 ## Routes
 
-Marketing layout (top nav + footer):
-- `/` — landing
-- `/models` — searchable / filterable / sortable model catalog
-- `/models/:id` — model detail (overview, pricing, API samples, benchmarks, versions)
-- `/pricing` — tiered pricing + per-token table
-- `/docs` — OpenAI-compatible API reference
-- `/login`, `/signup` — auth (stubbed)
-- `*` — 404
+Marketing (top nav + footer): `/`, `/models`, `/models/:id`, `/pricing`, `/docs`, `/login`, `/signup`, `*` (404)
 
-App layout (sidebar shell):
-- `/chat` — chat playground with model picker, params panel, cost meter
-- `/keys` — API keys dashboard with create-key modal
-- `/usage` — usage analytics with inline-SVG charts
-- `/credits` — billing balance, transactions, invoices
-- `/settings` — profile, org, members, security, BYOK, preferences
+App (sidebar shell): `/chat`, `/keys`, `/usage`, `/credits`, `/settings`
 
 Global: Cmd/Ctrl+K opens a model search palette.
+
+## Live Chat
+
+`POST /api/chat` accepts `{ modelId, messages, temperature, maxTokens }` and streams Server-Sent Events:
+- `data: {"delta": "..."}` per token chunk
+- `data: {"done": true, latencyMs, totalMs, inputTokens, outputTokens, cost}` at the end
+- `data: {"error": "..."}` on failure
+
+The route in `server/chat.ts` maps the catalog model id to the real provider model and calls the appropriate SDK with streaming enabled. Conversations are persisted client-side in `localStorage`.
+
+### Catalog → real model mapping
+
+| Catalog id | Real model | Provider |
+|---|---|---|
+| `gpt-5`, `gpt-5-turbo` | `gpt-5` | OpenAI |
+| `gpt-5-mini` | `gpt-5-mini` | OpenAI |
+| `gpt-5-nano` | `gpt-5-nano` | OpenAI |
+| `o4`, `o4-mini` | `o4-mini` | OpenAI |
+| `claude-4.5-opus`, `claude-4-opus` | `claude-opus-4-5` | Anthropic |
+| `claude-4.5-sonnet` | `claude-sonnet-4-5` | Anthropic |
+| `claude-4.5-haiku` | `claude-haiku-4-5` | Anthropic |
+| `gemini-2.5-pro`, `gemini-2.5-thinking` | `gemini-2.5-pro` | Google |
+| `gemini-2.5-flash`, `gemini-2.5-flash-lite` | `gemini-2.5-flash` | Google |
 
 ## File Layout
 
 ```
+server/
+  index.ts               Express + Vite middleware, port 5000
+  chat.ts                /api/chat — provider routing + SSE streaming
 src/
-  App.tsx                Routes + global Cmd+K palette
+  App.tsx                Routes + Cmd+K palette
   main.tsx               BrowserRouter entry
-  index.css              Tailwind + CSS variables (dark theme)
+  index.css              Tailwind + dark theme variables
   layouts/
     MarketingLayout.tsx  Public chrome
-    AppLayout.tsx        Authenticated shell
+    AppLayout.tsx        Authenticated shell with mobile drawer
   pages/                 One file per route
-  components/ui/         Shared primitives (button, input)
-  data/models.ts         Mock model catalog
-  lib/utils.ts           clsx helpers
+  data/models.ts         14-model closed-source catalog
 ```
+
+## Mobile Responsiveness
+
+- `AppLayout` shows a mobile top bar with a hamburger that opens a slide-in nav drawer. Sidebar stays fixed at md+.
+- `Chat` uses two slide-out drawers on mobile (history left, parameters right) accessed via header buttons. Both convert to fixed sidebars at lg+.
+- Tables in `Keys`, `Credits`, and `Pricing` get horizontal scroll wrappers with `min-w-[…]` to stay legible on narrow viewports.
+- Headers across `Models`, `Settings`, `Keys`, `Usage`, `Credits` use stacked flex layouts on mobile and use `px-4 sm:px-6 lg:px-8` instead of fixed `px-8`.
 
 ## Design Direction
 
-Dense, dark, developer-grade — Linear / Vercel / Stripe energy. Monospace for numbers, IDs, prices, and code; clean sans for prose. No emojis, no real third-party trademarked logos — provider monograms instead. Every screen is populated with realistic data so nothing reads as a placeholder.
+Dense, dark, developer-grade — Linear / Vercel / Stripe energy. Monospace for numbers, IDs, prices, and code; clean sans for prose. No emojis. Provider monograms instead of trademarked logos.
 
 ## What's Stubbed
 
-- Auth, payments, key creation, chat completions, usage data, BYOK keys, and team management are all client-state only. Form submissions don't hit any server. Adding a real backend later means swapping the local data + handlers in `pages/*` and `data/*` for fetch calls — the UI surface is already in place.
+Auth, payments, API key creation, usage analytics, billing transactions, BYOK, and team management are client-state only — they don't hit any server. The Chat page is the one fully wired feature: real streaming completions and live cost tracking based on the catalog's per-token prices.

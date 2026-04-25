@@ -14,9 +14,9 @@ export default function Settings() {
 
   return (
     <div className="flex flex-col h-full animate-fade-in overflow-hidden">
-      <header className="px-8 pt-8 pb-4 border-b border-border">
-        <h1 className="text-3xl font-bold tracking-tight mb-6">Settings</h1>
-        <div className="flex gap-6 overflow-x-auto">
+      <header className="px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-4 border-b border-border">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-6">Settings</h1>
+        <div className="flex gap-4 sm:gap-6 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           {tabs.map(tab => (
             <button
               key={tab.id}
@@ -31,7 +31,7 @@ export default function Settings() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-8 bg-muted/5">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-muted/5">
         <div className="max-w-2xl">
           {activeTab === "profile" && (
             <div className="space-y-6">

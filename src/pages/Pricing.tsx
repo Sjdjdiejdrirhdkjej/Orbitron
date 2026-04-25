@@ -57,28 +57,28 @@ export default function Pricing() {
 
       <section className="container mx-auto px-4 max-w-5xl mb-24">
         <h2 className="text-2xl font-bold mb-6">Model Pricing</h2>
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
-          <table className="w-full text-sm text-left">
+        <div className="border border-border rounded-lg overflow-hidden bg-card overflow-x-auto">
+          <table className="w-full text-sm text-left min-w-[560px]">
             <thead className="bg-muted/30 text-muted-foreground font-mono text-xs uppercase">
               <tr>
-                <th className="px-6 py-4 font-medium">Model</th>
-                <th className="px-6 py-4 font-medium text-right">Context</th>
-                <th className="px-6 py-4 font-medium text-right">Input (per 1M)</th>
-                <th className="px-6 py-4 font-medium text-right">Output (per 1M)</th>
+                <th className="px-4 sm:px-6 py-4 font-medium">Model</th>
+                <th className="px-4 sm:px-6 py-4 font-medium text-right">Context</th>
+                <th className="px-4 sm:px-6 py-4 font-medium text-right">Input (1M)</th>
+                <th className="px-4 sm:px-6 py-4 font-medium text-right">Output (1M)</th>
               </tr>
             </thead>
             <tbody className="divide-y border-border">
               {models.map(m => (
                 <tr key={m.id} className="hover:bg-muted/10 transition-colors">
-                  <td className="px-6 py-4">
+                  <td className="px-4 sm:px-6 py-4">
                     <div className="font-medium text-foreground">{m.name}</div>
                     <div className="text-xs text-muted-foreground font-mono mt-0.5">{m.id}</div>
                   </td>
-                  <td className="px-6 py-4 text-right font-mono text-muted-foreground">
+                  <td className="px-4 sm:px-6 py-4 text-right font-mono text-muted-foreground whitespace-nowrap">
                     {m.contextWindow >= 1000000 ? `${m.contextWindow / 1000000}M` : `${m.contextWindow / 1000}k`}
                   </td>
-                  <td className="px-6 py-4 text-right font-mono">${m.inputPrice.toFixed(2)}</td>
-                  <td className="px-6 py-4 text-right font-mono">${m.outputPrice.toFixed(2)}</td>
+                  <td className="px-4 sm:px-6 py-4 text-right font-mono whitespace-nowrap">${m.inputPrice.toFixed(2)}</td>
+                  <td className="px-4 sm:px-6 py-4 text-right font-mono whitespace-nowrap">${m.outputPrice.toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>

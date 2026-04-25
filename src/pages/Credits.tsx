@@ -3,10 +3,10 @@ import { Download, CreditCard, Plus } from "lucide-react";
 
 export default function Credits() {
   return (
-    <div className="flex flex-col h-full animate-fade-in p-8 overflow-y-auto">
-      <h1 className="text-3xl font-bold tracking-tight mb-8">Billing & Credits</h1>
+    <div className="flex flex-col h-full animate-fade-in p-4 sm:p-6 lg:p-8 overflow-y-auto">
+      <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-6 sm:mb-8">Billing & Credits</h1>
 
-      <div className="grid md:grid-cols-3 gap-6 mb-8">
+      <div className="grid md:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
         <div className="md:col-span-2 border border-border rounded-lg bg-card p-6 flex flex-col justify-between">
           <div>
             <div className="text-sm font-mono text-muted-foreground mb-2">Available Balance</div>
@@ -41,11 +41,11 @@ export default function Credits() {
         </div>
       </div>
 
-      <div className="space-y-8">
+      <div className="space-y-6 sm:space-y-8">
         <section>
           <h3 className="font-medium mb-4">Recent Transactions</h3>
-          <div className="border border-border rounded-lg overflow-hidden bg-card">
-            <table className="w-full text-sm text-left">
+          <div className="border border-border rounded-lg overflow-hidden bg-card overflow-x-auto">
+            <table className="w-full text-sm text-left min-w-[560px]">
               <thead className="bg-muted/30 text-muted-foreground font-mono text-xs uppercase">
                 <tr>
                   <th className="px-6 py-3 font-medium">Date</th>
@@ -80,8 +80,8 @@ export default function Credits() {
 
         <section>
           <h3 className="font-medium mb-4">Invoices</h3>
-          <div className="border border-border rounded-lg overflow-hidden bg-card">
-            <table className="w-full text-sm text-left">
+          <div className="border border-border rounded-lg overflow-hidden bg-card overflow-x-auto">
+            <table className="w-full text-sm text-left min-w-[560px]">
               <thead className="bg-muted/30 text-muted-foreground font-mono text-xs uppercase">
                 <tr>
                   <th className="px-6 py-3 font-medium">Date</th>
