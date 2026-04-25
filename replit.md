@@ -1,6 +1,6 @@
 # Switchboard — LLM Router UI
 
-A multi-model LLM gateway UI (think OpenRouter), branded **Switchboard**. One API key for every closed-source frontier model from OpenAI, Anthropic, and Google, billed per token at transparent prices. The Chat playground streams real responses through Replit's managed AI Integrations; the rest of the dashboard (keys, usage, credits) is realistic mock data.
+A multi-model LLM gateway UI (think OpenRouter), branded **Switchboard**. One API key for every closed-source frontier model from OpenAI, Anthropic, and Google, billed per token at transparent prices. Chat, Images, Status, Models catalog, and the Usage analytics page are all wired to real data. Pages where there's no real data source yet (e.g. Billing & Credits, model benchmark scores) render a clean "not configured" empty state instead of fabricated numbers.
 
 ## Stack
 
@@ -116,7 +116,11 @@ when signed in.
 
 `GET /api/status` — pings every provider in parallel with a 1-token completion (the proxy's `/models` list returns 405, so we use generation calls). Server-cached for 30s. Returns `{ status: "operational"|"degraded"|"down", checkedAt, providers: [{ name, status, latencyMs, error? }] }`. The marketing header pill and `/status` page consume this.
 
-Both endpoints live in `server/api.ts` and are registered alongside the chat route in `server/index.ts`.
+`GET /api/usage?days=N` (auth required) — real per-user analytics aggregated from the `usage_events` table. Returns `{ windowDays, totals: { requests, inputTokens, outputTokens, costUsd, errorRate }, daily: [{date, costUsd, requests}], topBySpend: [...], topByRequests: [...] }`. With zero events the totals are zeros and the Usage page renders an empty state instead of mock numbers.
+
+Every successful chat and image request appends a row to `usage_events` (user_id, kind, model_id, provider, tokens, cost, latency_ms, total_ms, success, created_at). `/api/models` and `/api/models/:id` derive `latency_ms` and `throughput_tokens_per_second` from these events (avg over the last 7 days, requires ≥3 successful chat events for a model). When there's not enough data the API returns `null` for those fields and the catalog UI renders `—`.
+
+All endpoints live in `server/api.ts` (or `server/chat.ts` for `/api/chat`) and are registered in `server/index.ts`.
 
 ### Catalog → real model mapping
 
@@ -172,4 +176,6 @@ Dense, dark, developer-grade — Linear / Vercel / Stripe energy. Monospace for 
 
 ## What's Stubbed
 
-Auth, payments, API key creation, usage analytics, billing transactions, BYOK, and team management are client-state only — they don't hit any server. The Chat page is the one fully wired feature: real streaming completions and live cost tracking based on the catalog's per-token prices.
+Real & wired: Replit Auth, API key issuance, Chat (streaming + cost), Images, Status, Usage analytics (DB-backed via `usage_events`), and measured latency/throughput on the Models pages.
+
+Still placeholder: Billing & Credits (no payment provider integration yet — the page renders an explicit empty state) and per-model benchmark scores (the Benchmarks tab on `/models/:id` shows an empty state). BYOK and team management remain UI-only.

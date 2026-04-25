@@ -40,22 +40,22 @@ export function MarketingLayout() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-6">
+      <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 safe-top">
+        <div className="container mx-auto px-4 h-14 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4 sm:gap-6">
             <Link to="/" className="flex items-center gap-2 font-mono font-bold tracking-tighter">
               <div className="w-5 h-5 bg-foreground rounded-sm grid place-items-center">
                 <div className="w-2 h-2 bg-background rounded-sm" />
               </div>
               SWITCHBOARD
             </Link>
-            <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
+            <nav className="hidden md:flex items-center gap-4 sm:gap-6 text-sm font-medium">
               <Link to="/models" className="text-muted-foreground hover:text-foreground transition-colors">Models</Link>
               <Link to="/pricing" className="text-muted-foreground hover:text-foreground transition-colors">Pricing</Link>
               <Link to="/docs" className="text-muted-foreground hover:text-foreground transition-colors">Docs</Link>
             </nav>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             <Link
               to="/status"
               className="hidden sm:flex items-center gap-2 text-xs font-mono text-muted-foreground border border-border rounded-full px-3 py-1 hover:text-foreground hover:border-foreground/30 transition-colors"
@@ -79,7 +79,7 @@ export function MarketingLayout() {
                     e.preventDefault();
                     gotoAuth("/api/login");
                   }}
-                  className="text-sm font-medium hover:text-primary transition-colors"
+                  className="text-sm font-medium hover:text-primary transition-colors hidden xs:block"
                 >
                   Log in
                 </a>
@@ -89,7 +89,7 @@ export function MarketingLayout() {
                     e.preventDefault();
                     gotoAuth("/api/login");
                   }}
-                  className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors"
+                  className="text-sm font-medium bg-foreground text-background px-3 sm:px-4 py-1.5 rounded-md hover:bg-foreground/90 transition-colors"
                 >
                   Get Started
                 </a>
@@ -101,8 +101,8 @@ export function MarketingLayout() {
       <main className="flex-1">
         <Outlet />
       </main>
-      <footer className="border-t border-border py-12 bg-muted/20">
-        <div className="container mx-auto px-4 grid grid-cols-2 md:grid-cols-4 gap-8">
+      <footer className="border-t border-border py-8 sm:py-12 bg-muted/20">
+        <div className="container mx-auto px-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8">
           <div>
             <div className="flex items-center gap-2 font-mono font-bold tracking-tighter mb-4">
               SWITCHBOARD
@@ -131,7 +131,7 @@ export function MarketingLayout() {
               <li><Link to="#" className="hover:text-foreground">Privacy Policy</Link></li>
               <li><Link to="#" className="hover:text-foreground">Terms of Service</Link></li>
               <li><Link to="/status" className="hover:text-foreground">Status</Link></li>
-              <li><Link to="#" className="hover:text-foreground">Security</Link></li>
+              <li><Link to="#" className="hover:text-foreground hidden sm:block">Security</Link></li>
             </ul>
           </div>
         </div>

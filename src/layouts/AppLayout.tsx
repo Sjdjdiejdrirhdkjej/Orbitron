@@ -189,6 +189,8 @@ export function AppLayout() {
             <img
               src={user.profileImageUrl}
               alt=""
+              loading="lazy"
+              decoding="async"
               className="w-8 h-8 rounded-full bg-accent object-cover shrink-0"
               referrerPolicy="no-referrer"
             />
@@ -232,17 +234,17 @@ export function AppLayout() {
       )}
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="flex-1 flex flex-col min-w-0 h-screen">
         {/* Mobile top bar */}
-        <div className="md:hidden h-14 border-b border-border flex items-center justify-between px-3 bg-background shrink-0">
+        <div className="md:hidden h-14 border-b border-border flex items-center justify-between px-3 sm:px-4 bg-background shrink-0 safe-top">
           <button
             onClick={() => setDrawerOpen(true)}
-            className="p-2 -ml-1 rounded-md hover:bg-muted"
+            className="p-2 -ml-1 rounded-md hover:bg-muted touch-target"
             aria-label="Open menu"
           >
             <Menu className="w-5 h-5" />
           </button>
-          <Link to="/" className="flex items-center gap-2 font-mono font-bold tracking-tighter text-sm">
+          <Link to="/" className="flex items-center gap-2 font-mono font-bold tracking-tighter text-xs sm:text-sm">
             <div className="w-4 h-4 bg-foreground rounded-sm grid place-items-center">
               <div className="w-1.5 h-1.5 bg-background rounded-sm" />
             </div>

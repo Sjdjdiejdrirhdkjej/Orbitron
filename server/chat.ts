@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { models as catalog } from "../src/data/models";
 import { requireAuth } from "./auth";
+import { recordUsage, providerForModel } from "./usage";
 import {
   WEB_SEARCH_TOOL_NAME,
   WEB_SEARCH_OPENAI_TOOL,
@@ -513,10 +514,36 @@ export function registerChatRoutes(app: Express): void {
         cost,
       });
       res.end();
+
+      // Record real usage for the analytics page. Best-effort; never blocks.
+      void recordUsage({
+        userId: req.auth!.user.id,
+        kind: "chat",
+        modelId,
+        provider: catalogEntry?.provider ?? providerForModel(modelId),
+        inputTokens,
+        outputTokens,
+        costUsd: cost,
+        latencyMs: firstTokenMs || null,
+        totalMs: totalTime,
+        success: true,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Chat request failed";
       console.error("Chat error:", err);
       send({ error: message });
+      void recordUsage({
+        userId: req.auth!.user.id,
+        kind: "chat",
+        modelId,
+        provider: catalogEntry?.provider ?? providerForModel(modelId),
+        inputTokens,
+        outputTokens: approxTokens(outputText),
+        costUsd: 0,
+        latencyMs: firstTokenMs || null,
+        totalMs: Date.now() - startTime,
+        success: false,
+      });
       res.end();
     }
   });

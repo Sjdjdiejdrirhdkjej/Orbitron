@@ -219,6 +219,8 @@ function ToolCallCard({ block }: { block: ToolCallBlock }) {
                   <img
                     src={r.favicon}
                     alt=""
+                    loading="lazy"
+                    decoding="async"
                     className="w-4 h-4 mt-0.5 rounded-sm shrink-0 object-contain"
                     onError={(e) => {
                       (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
@@ -772,13 +774,13 @@ export default function Chat() {
           </div>
         </header>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 pb-40">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 pb-48 sm:pb-40">
           {(!active || active.messages.length === 0) && (
-            <div className="max-w-3xl mx-auto text-center pt-12 sm:pt-24">
+            <div className="max-w-3xl mx-auto text-center pt-8 sm:pt-12">
               <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-muted mb-4">
                 <MessageSquare className="w-5 h-5 text-muted-foreground" />
               </div>
-              <h2 className="text-xl sm:text-2xl font-bold tracking-tight mb-2">
+              <h2 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight mb-2">
                 Chat with {activeModel.name}
               </h2>
               <p className="text-sm text-muted-foreground font-mono max-w-md mx-auto">
@@ -790,7 +792,7 @@ export default function Chat() {
           {active?.messages.map((msg) => (
             <div key={msg.id} className="max-w-3xl mx-auto flex gap-3 sm:gap-4 mb-6 sm:mb-8 animate-fade-in">
               <div
-                className={`w-7 h-7 sm:w-8 sm:h-8 rounded grid place-items-center font-bold text-xs shrink-0 mt-1 ${
+                className={`w-6 h-6 sm:w-8 sm:h-8 rounded grid place-items-center font-bold text-xs shrink-0 mt-0.5 sm:mt-1 ${
                   msg.role === "user"
                     ? "bg-primary/20 text-primary"
                     : msg.error
@@ -832,15 +834,15 @@ export default function Chat() {
         </div>
 
         {/* Composer */}
-        <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 bg-gradient-to-t from-background via-background to-transparent pt-10">
-          <div className="max-w-3xl mx-auto relative border border-border bg-card rounded-xl shadow-lg focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-all">
+        <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 bg-gradient-to-t from-background via-background to-transparent pt-8 sm:pt-10 safe-bottom">
+          <div className="max-w-3xl mx-auto relative border border-border bg-card rounded-lg sm:rounded-xl shadow-lg focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-all">
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               rows={1}
-              className="w-full bg-transparent p-3 sm:p-4 pr-14 pb-12 min-h-[68px] max-h-[200px] resize-none focus:outline-none text-sm placeholder:text-muted-foreground"
+              className="w-full bg-transparent p-3 sm:p-4 pr-14 pb-14 sm:pb-12 min-h-[68px] max-h-[200px] resize-none focus:outline-none text-base sm:text-sm placeholder:text-muted-foreground"
               placeholder={`Message ${activeModel.name}...`}
               disabled={streaming}
             />

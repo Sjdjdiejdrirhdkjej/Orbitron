@@ -46,37 +46,37 @@ function CommandPalette() {
   ).slice(0, 5);
 
   return (
-    <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-start justify-center pt-[20vh]" onClick={() => setIsOpen(false)}>
-      <div className="w-full max-w-xl bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-fade-in" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b border-border flex items-center">
+    <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-start justify-center pt-[10vh] sm:pt-[20vh]" onClick={() => setIsOpen(false)}>
+      <div className="w-full max-w-[90vw] sm:max-w-xl bg-card border border-border rounded-lg sm:rounded-xl shadow-xl sm:shadow-2xl overflow-hidden animate-fade-in" onClick={e => e.stopPropagation()}>
+        <div className="p-3 sm:p-4 border-b border-border flex items-center">
           <input 
             autoFocus
             type="text" 
             placeholder="Search models..." 
-            className="w-full bg-transparent font-mono text-sm focus:outline-none"
+            className="w-full bg-transparent font-mono text-sm focus:outline-none text-base sm:text-sm"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
-          <div className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded border border-border">ESC</div>
+          <div className="text-xs font-mono text-muted-foreground px-2 py-1 bg-muted rounded border border-border hidden sm:block">ESC</div>
         </div>
         <div className="max-h-[60vh] overflow-y-auto">
           {filtered.map(model => (
             <button 
               key={model.id}
-              className="w-full flex items-center justify-between p-4 hover:bg-muted/50 border-b border-border last:border-0 text-left transition-colors"
+              className="w-full flex items-center justify-between p-3 sm:p-4 hover:bg-muted/50 border-b border-border last:border-0 text-left transition-colors touch-target"
               onClick={() => {
                 navigate(`/models/${model.id}`);
                 setIsOpen(false);
               }}
             >
-              <div className="flex items-center gap-3">
-                <div className="w-6 h-6 rounded bg-muted grid place-items-center font-bold text-[10px]">{model.provider[0]}</div>
-                <div>
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="w-6 h-6 rounded bg-muted grid place-items-center font-bold text-[10px] shrink-0">{model.provider[0]}</div>
+                <div className="min-w-0">
                   <div className="font-medium text-sm">{model.name}</div>
                   <div className="text-xs font-mono text-muted-foreground">{model.provider}</div>
                 </div>
               </div>
-              <div className="text-xs font-mono text-muted-foreground">
+              <div className="text-xs font-mono text-muted-foreground shrink-0">
                 ${model.inputPrice.toFixed(2)}/M
               </div>
             </button>

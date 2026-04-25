@@ -90,6 +90,29 @@ export async function ensureSchema(): Promise<void> {
       revoked_at TIMESTAMPTZ
     );
     CREATE INDEX IF NOT EXISTS api_keys_user_id_idx ON api_keys(user_id);
+
+    -- Real usage events. Every successful chat / image request appends one row.
+    -- Powers /api/usage analytics and the measured latency/throughput shown on
+    -- the Models catalog. Errors are recorded with success=false so error-rate
+    -- can be derived without separate tables.
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,                       -- 'chat' | 'image'
+      model_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd NUMERIC(12, 6) NOT NULL DEFAULT 0,
+      latency_ms INTEGER,                       -- TTFT for chat, total for image
+      total_ms INTEGER,
+      success BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS usage_events_user_created_idx
+      ON usage_events(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS usage_events_model_created_idx
+      ON usage_events(model_id, created_at DESC);
   `);
 }
 

@@ -105,7 +105,7 @@ export default function Settings() {
   return (
     <div className="flex flex-col h-full animate-fade-in overflow-hidden">
       <header className="px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-4 border-b border-border">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-6">Settings</h1>
+        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight mb-4 sm:mb-6">Settings</h1>
         <div className="flex gap-4 sm:gap-6 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           {tabs.map(tab => (
             <button
@@ -130,6 +130,8 @@ export default function Settings() {
                   <img
                     src={user.profileImageUrl}
                     alt=""
+                    loading="lazy"
+                    decoding="async"
                     className="w-20 h-20 rounded-full bg-accent object-cover"
                     referrerPolicy="no-referrer"
                   />
@@ -238,24 +240,24 @@ export default function Settings() {
                         key={s.id}
                         className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4"
                       >
-                        <div className="flex items-start gap-3 min-w-0">
-                          <Monitor className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                              {s.device}
-                              {s.current && (
-                                <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 text-[10px] font-mono uppercase">
-                                  this device
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-muted-foreground font-mono mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                              <span>{s.ip ?? "ip unknown"}</span>
-                              <span>id {s.id}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-xs text-muted-foreground font-mono sm:text-right shrink-0 pl-7 sm:pl-0">
+              <div className="flex items-start gap-2 sm:gap-3 min-w-0">
+                <Monitor className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                    {s.device}
+                    {s.current && (
+                      <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 text-[10px] font-mono uppercase">
+                        this device
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground font-mono mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>{s.ip ?? "ip unknown"}</span>
+                    <span className="hidden sm:inline">id {s.id}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground font-mono sm:text-right shrink-0 pl-7 sm:pl-0">
                           <div>Active {formatRelative(s.lastSeenAt)}</div>
                           <div className="text-[11px] mt-0.5">
                             Expires {new Date(s.expiresAt).toLocaleDateString()}
@@ -278,8 +280,8 @@ export default function Settings() {
               
               <div className="space-y-4">
                 {["OpenAI", "Anthropic", "Google"].map(provider => (
-                  <div key={provider} className="p-4 border border-border rounded-lg bg-card flex gap-4 items-center justify-between">
-                    <div className="font-medium w-24">{provider}</div>
+                  <div key={provider} className="p-3 sm:p-4 border border-border rounded-lg bg-card flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center justify-between">
+                    <div className="font-medium w-full sm:w-24">{provider}</div>
                     <div className="flex-1">
                       <input 
                         type="password" 
@@ -287,7 +289,7 @@ export default function Settings() {
                         className="w-full bg-background border border-border rounded-md px-3 py-2 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50" 
                       />
                     </div>
-                    <button className="px-4 py-2 border border-border rounded-md font-medium text-sm hover:bg-muted transition-colors whitespace-nowrap">
+                    <button className="px-4 py-2 border border-border rounded-md font-medium text-sm hover:bg-muted transition-colors whitespace-nowrap touch-target">
                       Verify & Save
                     </button>
                   </div>

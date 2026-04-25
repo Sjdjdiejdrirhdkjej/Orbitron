@@ -4,6 +4,12 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { models as catalog, providers } from "../src/data/models";
 import { requireAuth } from "./auth";
+import {
+  recordUsage,
+  providerForModel,
+  getUsageSummary,
+  getMeasuredModelStats,
+} from "./usage";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -121,8 +127,10 @@ export function registerApiRoutes(app: Express): void {
     res.json(payload);
   });
 
-  // GET /api/models — list every model in the catalog with optional ?provider= filter
-  app.get("/api/models", (req: Request, res: Response) => {
+  // GET /api/models — list every model in the catalog with optional ?provider= filter.
+  // latency_ms / throughput_tokens_per_second are derived from measured usage when
+  // we have ≥3 successful chat events for a model in the last 7 days; otherwise null.
+  app.get("/api/models", async (req: Request, res: Response) => {
     const providerFilter = typeof req.query.provider === "string" ? req.query.provider : null;
     const modalityFilter = typeof req.query.modality === "string" ? req.query.modality : null;
 
@@ -135,34 +143,42 @@ export function registerApiRoutes(app: Express): void {
       data = data.filter((m) => m.modalities.includes(modalityFilter as never));
     }
 
+    const measured = await getMeasuredModelStats();
+
     res.json({
       object: "list",
       providers,
-      data: data.map((m) => ({
-        id: m.id,
-        object: "model",
-        name: m.name,
-        provider: m.provider,
-        context_window: m.contextWindow,
-        modalities: m.modalities,
-        pricing: {
-          input_per_million: m.inputPrice,
-          output_per_million: m.outputPrice,
-          currency: "USD",
-        },
-        throughput_tokens_per_second: m.throughput,
-        latency_ms: m.latency,
-        description: m.description,
-      })),
+      data: data.map((m) => {
+        const stats = measured.get(m.id);
+        return {
+          id: m.id,
+          object: "model",
+          name: m.name,
+          provider: m.provider,
+          context_window: m.contextWindow,
+          modalities: m.modalities,
+          pricing: {
+            input_per_million: m.inputPrice,
+            output_per_million: m.outputPrice,
+            currency: "USD",
+          },
+          throughput_tokens_per_second: stats?.throughputTokensPerSecond ?? null,
+          latency_ms: stats?.latencyMs ?? null,
+          measured_sample_size: stats?.sampleSize ?? 0,
+          description: m.description,
+        };
+      }),
     });
   });
 
-  // GET /api/models/:id — fetch one model by id
-  app.get("/api/models/:id", (req: Request, res: Response) => {
+  // GET /api/models/:id — fetch one model by id (with measured stats merged in)
+  app.get("/api/models/:id", async (req: Request, res: Response) => {
     const model = catalog.find((m) => m.id === req.params.id);
     if (!model) {
       return res.status(404).json({ error: { message: `Model not found: ${req.params.id}` } });
     }
+    const measured = await getMeasuredModelStats();
+    const stats = measured.get(model.id);
     res.json({
       id: model.id,
       object: "model",
@@ -175,10 +191,28 @@ export function registerApiRoutes(app: Express): void {
         output_per_million: model.outputPrice,
         currency: "USD",
       },
-      throughput_tokens_per_second: model.throughput,
-      latency_ms: model.latency,
+      throughput_tokens_per_second: stats?.throughputTokensPerSecond ?? null,
+      latency_ms: stats?.latencyMs ?? null,
+      measured_sample_size: stats?.sampleSize ?? 0,
       description: model.description,
     });
+  });
+
+  // GET /api/usage — real per-user analytics. Returns zeroed structures with no
+  // events yet so the Usage page can render a clean empty state.
+  app.get("/api/usage", requireAuth, async (req: Request, res: Response) => {
+    const windowDays = Math.max(
+      1,
+      Math.min(90, Number(req.query.days) || 30),
+    );
+    const userId = req.auth!.user.id;
+    try {
+      const summary = await getUsageSummary(userId, windowDays);
+      res.json(summary);
+    } catch (err) {
+      console.error("Usage summary error:", err);
+      res.status(500).json({ error: { message: "Failed to load usage" } });
+    }
   });
 
   // POST /api/images — generate an image with OpenAI gpt-image-1
@@ -205,6 +239,7 @@ export function registerApiRoutes(app: Express): void {
     }
 
     const startTime = Date.now();
+    const userId = req.auth!.user.id;
     try {
       if (model === "gemini-2.5-flash-image") {
         // Gemini generates one image per call; fan out for n>1.
@@ -230,9 +265,25 @@ export function registerApiRoutes(app: Express): void {
           };
         });
 
+        const totalMs = Date.now() - startTime;
+        const imagesReturned = data.filter((d) => d.b64_json).length;
+        // Gemini image pricing isn't published per-image the same way as gpt-image-1;
+        // record requests + latency without a synthetic cost.
+        void recordUsage({
+          userId,
+          kind: "image",
+          modelId: "gemini-2.5-flash-image",
+          provider: providerForModel("gemini-2.5-flash-image") || "Google",
+          inputTokens: 0,
+          outputTokens: imagesReturned,
+          costUsd: 0,
+          latencyMs: totalMs,
+          totalMs,
+          success: imagesReturned > 0,
+        });
         return res.json({
           model: "gemini-2.5-flash-image",
-          latencyMs: Date.now() - startTime,
+          latencyMs: totalMs,
           data,
         });
       }
@@ -250,14 +301,40 @@ export function registerApiRoutes(app: Express): void {
         revised_prompt: (img as { revised_prompt?: string }).revised_prompt ?? null,
       }));
 
+      const totalMs = Date.now() - startTime;
+      const imagesReturned = data.filter((d) => d.b64_json).length;
+      // gpt-image-1 list price is ~$0.04 per 1024-image (medium quality).
+      const perImageCost = 0.04;
+      void recordUsage({
+        userId,
+        kind: "image",
+        modelId: "gpt-image-1",
+        provider: providerForModel("gpt-image-1") || "OpenAI",
+        inputTokens: 0,
+        outputTokens: imagesReturned,
+        costUsd: perImageCost * imagesReturned,
+        latencyMs: totalMs,
+        totalMs,
+        success: imagesReturned > 0,
+      });
+
       res.json({
         model: "gpt-image-1",
-        latencyMs: Date.now() - startTime,
+        latencyMs: totalMs,
         data,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Image generation failed";
       console.error("Image generation error:", err);
+      void recordUsage({
+        userId,
+        kind: "image",
+        modelId: model,
+        provider: providerForModel(model) || "Unknown",
+        latencyMs: Date.now() - startTime,
+        totalMs: Date.now() - startTime,
+        success: false,
+      });
       res.status(500).json({ error: { message } });
     }
   });

@@ -138,9 +138,9 @@ export default function Keys() {
 
   return (
     <div className="flex flex-col h-full animate-fade-in p-4 sm:p-6 lg:p-8 overflow-y-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 sm:mb-6 md:mb-8">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">API Keys</h1>
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight">API Keys</h1>
           <p className="text-muted-foreground font-mono text-xs sm:text-sm mt-1">
             Generate keys to call <code className="text-foreground">/api/chat</code> and{" "}
             <code className="text-foreground">/api/images</code> from your apps.
@@ -169,7 +169,7 @@ export default function Keys() {
           <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading…
         </div>
       ) : activeKeys.length === 0 && revokedKeys.length === 0 ? (
-        <div className="border border-dashed border-border rounded-lg p-8 text-center text-sm text-muted-foreground">
+        <div className="border border-dashed border-border rounded-lg p-6 sm:p-8 text-center text-sm text-muted-foreground">
           <p className="font-mono">No keys yet.</p>
           <p className="mt-1">Click <span className="text-foreground">Create Key</span> to generate your first Switchboard API key.</p>
         </div>
@@ -253,12 +253,10 @@ export default function Keys() {
         <div
           className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
           onClick={() => !creating && setIsModalOpen(false)}
-        >
-          <div
-            className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md p-6 animate-fade-in"
+        >        <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md p-4 sm:p-6 animate-fade-in"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-xl font-bold mb-4">Create API Key</h2>
+            <h2 className="text-lg sm:text-xl font-bold mb-4">Create API Key</h2>
             <form className="space-y-4" onSubmit={handleCreate}>
               <div>
                 <label className="block text-sm font-medium mb-1.5 font-mono text-muted-foreground">
@@ -321,10 +319,10 @@ export default function Keys() {
       {/* Reveal modal — shown ONCE after key creation */}
       {revealedKey && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-lg p-6 animate-fade-in">
+          <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-lg p-4 sm:p-6 animate-fade-in">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div>
-                <h2 className="text-xl font-bold">Save your API key</h2>
+                <h2 className="text-lg sm:text-xl font-bold">Save your API key</h2>
                 <p className="text-sm text-muted-foreground mt-1">
                   This is the only time we'll show <span className="text-foreground">{revealedKey.name}</span>'s
                   full secret. Copy it somewhere safe — we don't store it in plaintext.

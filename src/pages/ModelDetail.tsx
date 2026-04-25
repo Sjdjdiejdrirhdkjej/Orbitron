@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Copy, Check } from "lucide-react";
+import { ArrowLeft, Copy, Check, BarChart3 } from "lucide-react";
 import { models } from "../data/models";
+
+interface MeasuredStats {
+  latencyMs: number | null;
+  throughput: number | null;
+  sampleSize: number;
+}
 
 export default function ModelDetail() {
   const { id } = useParams();
@@ -10,10 +16,45 @@ export default function ModelDetail() {
   const [codeLang, setCodeLang] = useState("typescript");
   const [copied, setCopied] = useState(false);
   const [baseUrl, setBaseUrl] = useState("https://your-deployment.replit.app");
+  const [stats, setStats] = useState<MeasuredStats>({
+    latencyMs: null,
+    throughput: null,
+    sampleSize: 0,
+  });
 
   useEffect(() => {
     if (typeof window !== "undefined") setBaseUrl(window.location.origin);
   }, []);
+
+  // Pull measured latency/throughput for this model.
+  useEffect(() => {
+    if (!model?.id) return;
+    let cancelled = false;
+    fetch(`/api/models/${encodeURIComponent(model.id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          data: {
+            latency_ms: number | null;
+            throughput_tokens_per_second: number | null;
+            measured_sample_size?: number;
+          } | null,
+        ) => {
+          if (cancelled || !data) return;
+          setStats({
+            latencyMs: data.latency_ms,
+            throughput: data.throughput_tokens_per_second,
+            sampleSize: data.measured_sample_size ?? 0,
+          });
+        },
+      )
+      .catch(() => {
+        /* leave defaults */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [model?.id]);
 
   const codeSnippets: Record<string, string> = {
     typescript: `import OpenAI from "openai";
@@ -80,8 +121,17 @@ print(response.choices[0].message.content)`,
                 <span>{model.provider}</span>
                 <span>•</span>
                 <span>{model.id}</span>
-                <span>•</span>
-                <span className="px-1.5 py-0.5 rounded bg-accent text-xs">v{new Date().getFullYear()}.{new Date().getMonth() + 1}</span>
+                {stats.sampleSize > 0 && (
+                  <>
+                    <span>•</span>
+                    <span
+                      className="px-1.5 py-0.5 rounded bg-accent text-xs"
+                      title="Stats based on real measurements from your recent chats"
+                    >
+                      {stats.sampleSize} measured calls
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -109,12 +159,34 @@ print(response.choices[0].message.content)`,
             </div>
           </div>
           <div className="p-4 rounded-lg border border-border bg-muted/10">
-            <div className="text-xs text-muted-foreground font-mono mb-1">Throughput</div>
-            <div className="text-xl font-bold font-mono">{model.throughput} t/s</div>
+            <div
+              className="text-xs text-muted-foreground font-mono mb-1"
+              title="Average tokens per second across your last 7 days of chats"
+            >
+              Throughput
+            </div>
+            <div className="text-xl font-bold font-mono">
+              {stats.throughput != null ? (
+                `${stats.throughput} t/s`
+              ) : (
+                <span className="text-muted-foreground/60">—</span>
+              )}
+            </div>
           </div>
           <div className="p-4 rounded-lg border border-border bg-muted/10">
-            <div className="text-xs text-muted-foreground font-mono mb-1">TTFT (Latency)</div>
-            <div className="text-xl font-bold font-mono text-green-400">{model.latency}ms</div>
+            <div
+              className="text-xs text-muted-foreground font-mono mb-1"
+              title="Time to first token, measured from your real chats"
+            >
+              TTFT (Latency)
+            </div>
+            <div className="text-xl font-bold font-mono">
+              {stats.latencyMs != null ? (
+                <span className="text-green-400">{stats.latencyMs}ms</span>
+              ) : (
+                <span className="text-muted-foreground/60">—</span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -184,38 +256,17 @@ print(response.choices[0].message.content)`,
 
         {activeTab === "benchmarks" && (
           <div className="max-w-4xl">
-            <div className="border border-border rounded-lg overflow-hidden">
-              <table className="w-full text-sm font-mono">
-                <thead className="bg-muted/30 text-muted-foreground">
-                  <tr>
-                    <th className="text-left px-4 py-3 font-medium">Benchmark</th>
-                    <th className="text-left px-4 py-3 font-medium">Metric</th>
-                    <th className="text-right px-4 py-3 font-medium">Score</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y border-border">
-                  <tr>
-                    <td className="px-4 py-3 text-foreground">MMLU</td>
-                    <td className="px-4 py-3 text-muted-foreground">5-shot</td>
-                    <td className="px-4 py-3 text-right text-foreground font-bold">88.7%</td>
-                  </tr>
-                  <tr>
-                    <td className="px-4 py-3 text-foreground">HumanEval</td>
-                    <td className="px-4 py-3 text-muted-foreground">0-shot</td>
-                    <td className="px-4 py-3 text-right text-foreground font-bold">92.3%</td>
-                  </tr>
-                  <tr>
-                    <td className="px-4 py-3 text-foreground">GPQA</td>
-                    <td className="px-4 py-3 text-muted-foreground">Diamond</td>
-                    <td className="px-4 py-3 text-right text-foreground font-bold">53.1%</td>
-                  </tr>
-                  <tr>
-                    <td className="px-4 py-3 text-foreground">MATH</td>
-                    <td className="px-4 py-3 text-muted-foreground">4-shot</td>
-                    <td className="px-4 py-3 text-right text-foreground font-bold">71.5%</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="border border-dashed border-border rounded-lg bg-card/30 p-12 text-center">
+              <div className="w-12 h-12 rounded-full bg-muted/40 grid place-items-center mx-auto mb-4">
+                <BarChart3 className="w-5 h-5 text-muted-foreground" />
+              </div>
+              <h3 className="font-bold text-sm mb-1">No benchmark data yet</h3>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
+                Switchboard hasn't published independent benchmark scores for{" "}
+                <span className="font-mono">{model.id}</span>. Once we run a
+                standard suite (MMLU, HumanEval, GPQA, etc.) the results will
+                show up here.
+              </p>
             </div>
           </div>
         )}
