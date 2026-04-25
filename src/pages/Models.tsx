@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Search, Filter, ArrowUpDown, Check } from "lucide-react";
-import { models, providers } from "../data/models";
+import { Search, Filter, ArrowUpDown, Check, Sparkles, X } from "lucide-react";
+import { models, providers, Modality } from "../data/models";
+
+const MODALITIES: Modality[] = ["text", "vision", "audio", "tools"];
 
 type SortKey =
   | "price-asc"
@@ -24,10 +26,13 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 export default function Models() {
   const [searchTerm, setSearchTerm] = useState("");
   const [provider, setProvider] = useState<string>("all");
+  const [selectedModalities, setSelectedModalities] = useState<Modality[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>("price-asc");
   const [providerOpen, setProviderOpen] = useState(false);
+  const [modalityOpen, setModalityOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   const providerRef = useRef<HTMLDivElement>(null);
+  const modalityRef = useRef<HTMLDivElement>(null);
   const sortRef = useRef<HTMLDivElement>(null);
 
   // Close menus on outside click / escape
@@ -36,6 +41,9 @@ export default function Models() {
       if (providerRef.current && !providerRef.current.contains(e.target as Node)) {
         setProviderOpen(false);
       }
+      if (modalityRef.current && !modalityRef.current.contains(e.target as Node)) {
+        setModalityOpen(false);
+      }
       if (sortRef.current && !sortRef.current.contains(e.target as Node)) {
         setSortOpen(false);
       }
@@ -43,6 +51,7 @@ export default function Models() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setProviderOpen(false);
+        setModalityOpen(false);
         setSortOpen(false);
       }
     };
@@ -54,6 +63,18 @@ export default function Models() {
     };
   }, []);
 
+  const toggleModality = (m: Modality) => {
+    setSelectedModalities((prev) =>
+      prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
+    );
+  };
+
+  const clearFilters = () => {
+    setProvider("all");
+    setSelectedModalities([]);
+    setSearchTerm("");
+  };
+
   const filteredModels = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     let list = models.filter((m) => {
@@ -63,7 +84,10 @@ export default function Models() {
         m.provider.toLowerCase().includes(term) ||
         m.id.toLowerCase().includes(term);
       const matchesProvider = provider === "all" || m.provider === provider;
-      return matchesSearch && matchesProvider;
+      const matchesModalities =
+        selectedModalities.length === 0 ||
+        selectedModalities.every((mod) => m.modalities.includes(mod));
+      return matchesSearch && matchesProvider && matchesModalities;
     });
 
     list = [...list].sort((a, b) => {
@@ -88,10 +112,16 @@ export default function Models() {
     });
 
     return list;
-  }, [searchTerm, provider, sortKey]);
+  }, [searchTerm, provider, selectedModalities, sortKey]);
 
   const providerLabel = provider === "all" ? "All providers" : provider;
   const sortLabel = SORT_OPTIONS.find((o) => o.value === sortKey)?.label ?? "Sort";
+  const modalityLabel =
+    selectedModalities.length === 0
+      ? "Modalities"
+      : `Modalities · ${selectedModalities.length}`;
+  const hasActiveFilters =
+    provider !== "all" || selectedModalities.length > 0 || searchTerm.trim() !== "";
 
   return (
     <div className="flex flex-col h-full animate-fade-in">
@@ -155,6 +185,46 @@ export default function Models() {
               )}
             </div>
 
+            {/* Modality multi-select */}
+            <div className="relative flex-1 sm:flex-none" ref={modalityRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalityOpen((o) => !o);
+                  setProviderOpen(false);
+                  setSortOpen(false);
+                }}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-background border border-border rounded-md font-mono text-sm hover:bg-accent transition-colors"
+              >
+                <Sparkles className="w-4 h-4" /> {modalityLabel}
+              </button>
+              {modalityOpen && (
+                <div className="absolute right-0 sm:right-auto sm:left-0 mt-1 z-20 w-48 bg-background border border-border rounded-md shadow-lg py-1 font-mono text-sm">
+                  {MODALITIES.map((mod) => (
+                    <MenuItem
+                      key={mod}
+                      selected={selectedModalities.includes(mod)}
+                      onClick={() => toggleModality(mod)}
+                    >
+                      <span className="capitalize">{mod}</span>
+                    </MenuItem>
+                  ))}
+                  {selectedModalities.length > 0 && (
+                    <>
+                      <div className="my-1 border-t border-border" />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedModalities([])}
+                        className="w-full text-left px-3 py-1.5 text-muted-foreground hover:bg-accent transition-colors"
+                      >
+                        Clear modalities
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Sort */}
             <div className="relative flex-1 sm:flex-none" ref={sortRef}>
               <button
@@ -187,6 +257,29 @@ export default function Models() {
             </div>
           </div>
         </div>
+
+        {hasActiveFilters && (
+          <div className="flex flex-wrap items-center gap-2 mb-4 font-mono text-xs">
+            <span className="text-muted-foreground">
+              {filteredModels.length} of {models.length}
+            </span>
+            {provider !== "all" && (
+              <FilterChip onRemove={() => setProvider("all")}>{provider}</FilterChip>
+            )}
+            {selectedModalities.map((mod) => (
+              <FilterChip key={mod} onRemove={() => toggleModality(mod)}>
+                <span className="capitalize">{mod}</span>
+              </FilterChip>
+            ))}
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-muted-foreground hover:text-foreground underline underline-offset-2"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
 
         {filteredModels.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground font-mono text-sm">
@@ -270,6 +363,28 @@ export default function Models() {
         )}
       </div>
     </div>
+  );
+}
+
+function FilterChip({
+  children,
+  onRemove,
+}: {
+  children: React.ReactNode;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground border border-border">
+      {children}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="hover:text-foreground"
+        aria-label="Remove filter"
+      >
+        <X className="w-3 h-3" />
+      </button>
+    </span>
   );
 }
 
