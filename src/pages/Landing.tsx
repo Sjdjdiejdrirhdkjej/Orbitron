@@ -14,7 +14,7 @@ export default function Landing() {
 
 const client = new OpenAI({
   baseURL: "${baseUrl}/api",
-  apiKey: process.env.SWITCHBOARD_API_KEY,
+  apiKey: "YOUR_SWITCHBOARD_API_KEY",
 });
 
 const response = await client.chat.completions.create({
@@ -100,7 +100,7 @@ const response = await client.chat.completions.create({
 <span className="text-blue-400">import</span> OpenAI <span className="text-blue-400">from</span> <span className="text-green-400">"openai"</span>;{`\n\n`}
 <span className="text-blue-400">const</span> client = <span className="text-blue-400">new</span> OpenAI({`{`}{`\n`}
 {'  '}baseURL: <span className="text-green-400">"{baseUrl}/api"</span>,{`\n`}
-{'  '}apiKey: process.env.SWITCHBOARD_API_KEY,{`\n`}
+{'  '}apiKey: <span className="text-green-400">"YOUR_SWITCHBOARD_API_KEY"</span>,{`\n`}
 {`}`});{`\n\n`}
 <span className="text-blue-400">const</span> response = <span className="text-blue-400">await</span> client.chat.completions.create({`{`}{`\n`}
 {'  '}model: <span className="text-green-400">"claude-sonnet-4.6"</span>, <span className="text-muted-foreground/50">// Just change this</span>{`\n`}

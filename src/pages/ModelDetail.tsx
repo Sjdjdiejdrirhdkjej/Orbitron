@@ -20,7 +20,7 @@ export default function ModelDetail() {
 
 const client = new OpenAI({
   baseURL: "https://api.switchboard.dev/v1",
-  apiKey: process.env.SWITCHBOARD_API_KEY,
+  apiKey: "YOUR_SWITCHBOARD_API_KEY",
 });
 
 const response = await client.chat.completions.create({
@@ -44,7 +44,7 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)`,
     curl: `curl https://api.switchboard.dev/v1/chat/completions \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer $SWITCHBOARD_API_KEY" \\
+  -H "Authorization: Bearer YOUR_SWITCHBOARD_API_KEY" \\
   -d '{
     "model": "${model.id}",
     "messages": [{"role": "user", "content": "Hello!"}]

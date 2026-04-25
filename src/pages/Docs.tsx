@@ -15,7 +15,7 @@ export default function Docs() {
 
 const client = new OpenAI({
   baseURL: "${baseUrl}/api", // Note the base URL
-  apiKey: process.env.SWITCHBOARD_API_KEY,
+  apiKey: "YOUR_SWITCHBOARD_API_KEY",
 });
 
 async function main() {
@@ -55,7 +55,7 @@ main();`;
 
 const client = new OpenAI({
   baseURL: "${baseUrl}/api",
-  apiKey: process.env.SWITCHBOARD_API_KEY,
+  apiKey: "YOUR_SWITCHBOARD_API_KEY",
 });
 
 const stream = await client.chat.completions.create({
@@ -83,7 +83,7 @@ data: [DONE]`;
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    Authorization: \`Bearer \${SWITCHBOARD_API_KEY}\`,
+    Authorization: "Bearer YOUR_SWITCHBOARD_API_KEY",
   },
   body: JSON.stringify({
     modelId: "claude-sonnet-4.6",
