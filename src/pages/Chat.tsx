@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { models } from "../data/models";
 import { Markdown } from "../components/Markdown";
+import { ProviderIcon } from "../components/ProviderIcon";
 
 type Role = "user" | "assistant";
 
@@ -967,10 +968,19 @@ export default function Chat() {
                       ? "bg-primary/20 text-primary"
                       : msg.error
                       ? "bg-destructive/20 text-destructive"
-                      : "bg-foreground text-background"
+                      : "bg-muted"
                   }`}
                 >
-                  {msg.role === "user" ? "U" : (msg.modelId ?? "")[0]?.toUpperCase() || "A"}
+                  {msg.role === "user" ? (
+                    "U"
+                  ) : (
+                    <ProviderIcon
+                      provider={
+                        models.find((m) => m.id === msg.modelId)?.provider ?? ""
+                      }
+                      className="w-3.5 h-3.5 sm:w-4 sm:h-4"
+                    />
+                  )}
                 </div>
                 <div className="flex-1 space-y-2 min-w-0">
                   <div className="font-bold text-sm">

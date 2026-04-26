@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { models } from "../data/models";
+import { ProviderIcon } from "../components/ProviderIcon";
 
 interface SharedMessage {
   id?: string;
@@ -126,12 +127,20 @@ export default function SharedChatPage() {
                     className={`w-6 h-6 sm:w-8 sm:h-8 rounded grid place-items-center font-bold text-xs shrink-0 mt-0.5 sm:mt-1 ${
                       msg.role === "user"
                         ? "bg-primary/20 text-primary"
-                        : "bg-foreground text-background"
+                        : "bg-muted"
                     }`}
                   >
-                    {msg.role === "user"
-                      ? "U"
-                      : (msg.modelId ?? "")[0]?.toUpperCase() || "A"}
+                    {msg.role === "user" ? (
+                      "U"
+                    ) : (
+                      <ProviderIcon
+                        provider={
+                          models.find((m) => m.id === msg.modelId)?.provider ??
+                          ""
+                        }
+                        className="w-3.5 h-3.5 sm:w-4 sm:h-4"
+                      />
+                    )}
                   </div>
                   <div className="flex-1 space-y-2 min-w-0">
                     <div className="font-bold text-sm">

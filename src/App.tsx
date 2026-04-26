@@ -19,6 +19,7 @@ import Signup from "./pages/Signup";
 import SharedChat from "./pages/SharedChat";
 import NotFound from "./pages/NotFound";
 import { models } from "./data/models";
+import { ProviderIcon } from "./components/ProviderIcon";
 
 function CommandPalette() {
   const [isOpen, setIsOpen] = useState(false);
@@ -71,7 +72,9 @@ function CommandPalette() {
               }}
             >
               <div className="flex items-center gap-2 sm:gap-3">
-                <div className="w-6 h-6 rounded bg-muted grid place-items-center font-bold text-[10px] shrink-0">{model.provider[0]}</div>
+                <div className="w-6 h-6 rounded bg-muted grid place-items-center shrink-0">
+                  <ProviderIcon provider={model.provider} className="w-3.5 h-3.5" />
+                </div>
                 <div className="min-w-0">
                   <div className="font-medium text-sm">{model.name}</div>
                   <div className="text-xs font-mono text-muted-foreground">{model.provider}</div>

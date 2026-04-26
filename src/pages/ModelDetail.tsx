@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Copy, Check, BarChart3 } from "lucide-react";
 import { models } from "../data/models";
+import { ProviderIcon } from "../components/ProviderIcon";
 
 interface MeasuredStats {
   latencyMs: number | null;
@@ -112,8 +113,8 @@ print(response.choices[0].message.content)`,
         
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded bg-muted grid place-items-center font-bold text-lg">
-              {model.provider[0]}
+            <div className="w-12 h-12 rounded bg-muted grid place-items-center">
+              <ProviderIcon provider={model.provider} className="w-6 h-6" />
             </div>
             <div>
               <h1 className="text-3xl font-bold tracking-tight">{model.name}</h1>

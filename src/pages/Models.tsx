@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Search, Filter, ArrowUpDown, Check, Sparkles, X } from "lucide-react";
 import { models, providers, Modality } from "../data/models";
+import { ProviderIcon } from "../components/ProviderIcon";
 
 const MODALITIES: Modality[] = ["text", "vision", "audio", "tools"];
 
@@ -344,8 +345,8 @@ export default function Models() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 sm:gap-3 mb-2">
-                    <div className="w-8 h-8 rounded bg-muted grid place-items-center font-bold text-xs shrink-0">
-                      {model.provider[0]}
+                    <div className="w-8 h-8 rounded bg-muted grid place-items-center shrink-0">
+                      <ProviderIcon provider={model.provider} className="w-4 h-4" />
                     </div>
                     <div className="min-w-0">
                       <h3 className="font-bold text-sm sm:text-base">{model.name}</h3>
