@@ -204,7 +204,7 @@ export async function requireApiKey(
   if (!token.startsWith(KEY_PREFIX)) {
     return res.status(401).json({
       error: {
-        message: `Invalid API key format. Switchboard keys start with '${KEY_PREFIX}'.`,
+        message: `Invalid API key format. Orbitron keys start with '${KEY_PREFIX}'.`,
         type: "invalid_api_key",
       },
     });

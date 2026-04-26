@@ -56,7 +56,7 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
 /**
  * Renders markdown text with GitHub-flavored markdown support
  * (bold, italic, code, lists, tables, links, blockquotes, etc.).
- * Styled to match the Switchboard chat surface.
+ * Styled to match the Orbitron chat surface.
  */
 export function Markdown({ children }: MarkdownProps) {
   return (

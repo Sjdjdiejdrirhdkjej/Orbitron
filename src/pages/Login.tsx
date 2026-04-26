@@ -24,7 +24,7 @@ export default function Login() {
           </div>
         </Link>
 
-        <h1 className="text-2xl font-bold tracking-tight mb-2">Sign in to Switchboard</h1>
+        <h1 className="text-2xl font-bold tracking-tight mb-2">Sign in to Orbitron</h1>
         <p className="text-muted-foreground text-sm mb-8 font-mono">
           Redirecting you to Replit to continue…
         </p>

@@ -465,7 +465,7 @@ export default function Keys() {
       ) : activeKeys.length === 0 && revokedKeys.length === 0 ? (
         <div className="border border-dashed border-border rounded-lg p-6 sm:p-8 text-center text-sm text-muted-foreground">
           <p className="font-mono">No keys yet.</p>
-          <p className="mt-1">Click <span className="text-foreground">Create Key</span> to generate your first Switchboard API key.</p>
+          <p className="mt-1">Click <span className="text-foreground">Create Key</span> to generate your first Orbitron API key.</p>
         </div>
       ) : (
         <div className="border border-border rounded-lg overflow-hidden bg-card overflow-x-auto">
@@ -692,7 +692,7 @@ export default function Keys() {
             </div>
 
             <div className="mt-4 text-xs font-mono text-muted-foreground border border-border rounded-md bg-muted/20 px-3 py-2">
-              Use it as <span className="text-foreground">Authorization: Bearer …</span> when calling Switchboard APIs.
+              Use it as <span className="text-foreground">Authorization: Bearer …</span> when calling Orbitron APIs.
             </div>
 
             <div className="flex justify-end mt-6">

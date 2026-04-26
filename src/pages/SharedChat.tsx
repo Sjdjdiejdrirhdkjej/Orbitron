@@ -70,7 +70,7 @@ export default function SharedChatPage() {
             <div className="w-6 h-6 bg-foreground rounded-sm grid place-items-center">
               <div className="w-2.5 h-2.5 bg-background rounded-sm" />
             </div>
-            <span className="font-bold text-sm">Switchboard</span>
+            <span className="font-bold text-sm">Orbitron</span>
           </Link>
           <div className="text-xs font-mono text-muted-foreground truncate min-w-0">
             {data ? `Shared chat · ${data.title}` : "Shared chat"}
@@ -79,7 +79,7 @@ export default function SharedChatPage() {
             to="/chat"
             className="shrink-0 text-xs font-mono px-3 py-1.5 rounded-md border border-border hover:bg-muted transition-colors"
           >
-            Try Switchboard
+            Try Orbitron
           </Link>
         </div>
       </header>

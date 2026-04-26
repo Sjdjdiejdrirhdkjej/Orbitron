@@ -14,7 +14,7 @@ export default function Landing() {
 
 const client = new OpenAI({
   baseURL: "${baseUrl}/api",
-  apiKey: "YOUR_SWITCHBOARD_API_KEY",
+  apiKey: "YOUR_ORBITRON_API_KEY",
 });
 
 const response = await client.chat.completions.create({
@@ -43,7 +43,7 @@ const response = await client.chat.completions.create({
           </h1>
           
           <p className="text-base sm:text-xl text-muted-foreground mb-8 sm:mb-12 max-w-2xl mx-auto font-mono text-sm md:text-base leading-relaxed">
-            Switchboard is the neutral infrastructure for AI. Access every frontier model from OpenAI, Anthropic, and Google through a single API key. Transparent per-token pricing. Zero markup.
+            Orbitron is the neutral infrastructure for AI. Access every frontier model from OpenAI, Anthropic, and Google through a single API key. Transparent per-token pricing. Zero markup.
           </p>
           
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
@@ -67,7 +67,7 @@ const response = await client.chat.completions.create({
             <div>
               <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mb-4">Standardized across providers.</h2>
               <p className="text-muted-foreground mb-4 sm:mb-6 font-mono text-sm">
-                No more learning new SDKs. Switchboard perfectly emulates the OpenAI API format. Just change your base URL and pass the model name.
+                No more learning new SDKs. Orbitron perfectly emulates the OpenAI API format. Just change your base URL and pass the model name.
               </p>
               <ul className="space-y-4 mb-8 font-mono text-sm">
                 <li className="flex items-start gap-2 sm:gap-3">

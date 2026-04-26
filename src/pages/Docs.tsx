@@ -12,19 +12,19 @@ export default function Docs() {
   }, []);
 
   // Node.js quickstart
-  const quickstartNode = "import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '" + baseUrl + "/api',\n  apiKey: process.env.SWITCHBOARD_API_KEY,\n});\n\nasync function main() {\n  const completion = await client.chat.completions.create({\n    messages: [{ role: 'user', content: 'Hello, world!' }],\n    model: 'claude-sonnet-4.6',\n  });\n  console.log(completion.choices[0].message.content);\n}\n\nmain();";
+  const quickstartNode = "import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '" + baseUrl + "/api',\n  apiKey: process.env.ORBITRON_API_KEY,\n});\n\nasync function main() {\n  const completion = await client.chat.completions.create({\n    messages: [{ role: 'user', content: 'Hello, world!' }],\n    model: 'claude-sonnet-4.6',\n  });\n  console.log(completion.choices[0].message.content);\n}\n\nmain();";
 
   // Python quickstart
-  const quickstartPython = "import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    base_url='" + baseUrl + "/api',\n    api_key=os.environ.get('SWITCHBOARD_API_KEY'),\n)\n\ncompletion = client.chat.completions.create(\n    messages=[{'role': 'user', 'content': 'Hello, world!'}],\n    model='claude-sonnet-4.6',\n)\n\nprint(completion.choices[0].message.content)";
+  const quickstartPython = "import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    base_url='" + baseUrl + "/api',\n    api_key=os.environ.get('ORBITRON_API_KEY'),\n)\n\ncompletion = client.chat.completions.create(\n    messages=[{'role': 'user', 'content': 'Hello, world!'}],\n    model='claude-sonnet-4.6',\n)\n\nprint(completion.choices[0].message.content)";
 
   // cURL example
-  const curlExample = "curl " + baseUrl + "/api/chat \\\n  -H 'Authorization: Bearer $SWITCHBOARD_API_KEY' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"modelId\": \"claude-sonnet-4.6\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}]}'";
+  const curlExample = "curl " + baseUrl + "/api/chat \\\n  -H 'Authorization: Bearer $ORBITRON_API_KEY' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"modelId\": \"claude-sonnet-4.6\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}]}'";
 
   // Streaming Node.js
-  const streamingNode = "import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '" + baseUrl + "/api',\n  apiKey: process.env.SWITCHBOARD_API_KEY,\n});\n\nconst stream = await client.chat.completions.create({\n  model: 'gpt-5.4',\n  messages: [{ role: 'user', content: 'Write a haiku about routing.' }],\n  stream: true,\n});\n\nfor await (const chunk of stream) {\n  const delta = chunk.choices[0]?.delta?.content;\n  if (delta) process.stdout.write(delta);\n}";
+  const streamingNode = "import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '" + baseUrl + "/api',\n  apiKey: process.env.ORBITRON_API_KEY,\n});\n\nconst stream = await client.chat.completions.create({\n  model: 'gpt-5.4',\n  messages: [{ role: 'user', content: 'Write a haiku about routing.' }],\n  stream: true,\n});\n\nfor await (const chunk of stream) {\n  const delta = chunk.choices[0]?.delta?.content;\n  if (delta) process.stdout.write(delta);\n}";
 
   // Streaming Python
-  const streamingPython = "import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    base_url='" + baseUrl + "/api',\n    api_key=os.environ.get('SWITCHBOARD_API_KEY'),\n)\n\nstream = client.chat.completions.create(\n    model='gpt-5.4',\n    messages=[{'role': 'user', 'content': 'Write a haiku about routing.'}],\n    stream=True,\n)\n\nfor chunk in stream:\n    delta = chunk.choices[0].delta.content\n    if delta:\n        print(delta, end='', flush=True)";
+  const streamingPython = "import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    base_url='" + baseUrl + "/api',\n    api_key=os.environ.get('ORBITRON_API_KEY'),\n)\n\nstream = client.chat.completions.create(\n    model='gpt-5.4',\n    messages=[{'role': 'user', 'content': 'Write a haiku about routing.'}],\n    stream=True,\n)\n\nfor chunk in stream:\n    delta = chunk.choices[0].delta.content\n    if delta:\n        print(delta, end='', flush=True)";
 
   // SSE Response format
   const streamingSSE = "data: {\"delta\": \"Hello\"}\ndata: {\"delta\": \" world\"}\ndata: {\"done\": true, \"latencyMs\": 150, \"totalMs\": 320, \"inputTokens\": 12, \"outputTokens\": 8, \"cost\": 0.00023}";
@@ -105,14 +105,14 @@ export default function Docs() {
         <div className="prose prose-invert max-w-none">
           <h1 id="quickstart" className="text-4xl font-bold tracking-tight mb-4">API Documentation</h1>
           <p className="text-xl text-muted-foreground font-mono text-sm leading-relaxed mb-12">
-            Switchboard provides an OpenAI-compatible API to interact with every frontier model from OpenAI, Anthropic, and Google.
+            Orbitron provides an OpenAI-compatible API to interact with every frontier model from OpenAI, Anthropic, and Google.
           </p>
 
           {/* Authentication Section */}
           <section id="auth" className="mb-16">
             <h2 className="text-2xl font-bold mb-4">Authentication</h2>
             <p className="text-muted-foreground mb-4 text-sm leading-relaxed">
-              Every Switchboard request must include a personal API key in the{' '}
+              Every Orbitron request must include a personal API key in the{' '}
               <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground mx-1">
                 Authorization
               </code>{' '}
@@ -174,7 +174,7 @@ export default function Docs() {
           <section id="sdks" className="mb-16">
             <h2 className="text-2xl font-bold mb-4">Official SDKs</h2>
             <p className="text-muted-foreground mb-6 text-sm leading-relaxed">
-              Switchboard is fully compatible with the official OpenAI SDKs. Just change the base URL and use your Switchboard API key.
+              Orbitron is fully compatible with the official OpenAI SDKs. Just change the base URL and use your Orbitron API key.
             </p>
 
             <h3 className="text-lg font-bold mb-3">Node.js / TypeScript</h3>
@@ -711,7 +711,7 @@ export default function Docs() {
           <section id="pricing" className="mb-16">
             <h2 className="text-2xl font-bold mb-4">Pricing</h2>
             <p className="text-muted-foreground mb-6 text-sm leading-relaxed">
-              Switchboard charges based on token usage at the model's listed price per million tokens.
+              Orbitron charges based on token usage at the model's listed price per million tokens.
             </p>
 
             <h3 className="text-lg font-bold mb-3">How Billing Works</h3>

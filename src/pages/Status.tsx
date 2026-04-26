@@ -72,7 +72,7 @@ export default function Status() {
         <div>
           <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-2">System Status</h1>
           <p className="text-xs sm:text-sm text-muted-foreground font-mono">
-            Live health of every upstream provider Switchboard routes through.
+            Live health of every upstream provider Orbitron routes through.
           </p>
         </div>
         <button

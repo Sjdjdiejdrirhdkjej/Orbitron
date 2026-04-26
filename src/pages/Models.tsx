@@ -176,7 +176,7 @@ export default function Models() {
       <header className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 border-b border-border bg-card shrink-0">
         <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight mb-2">Model Catalog</h1>
         <p className="text-muted-foreground font-mono text-xs sm:text-sm max-w-2xl">
-          Browse {models.length} frontier models available through Switchboard. Prices are per 1
+          Browse {models.length} frontier models available through Orbitron. Prices are per 1
           million tokens.
         </p>
       </header>

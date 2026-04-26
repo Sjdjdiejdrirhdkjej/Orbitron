@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { gotoAuth } from "../lib/auth";
 
 /**
- * Switchboard now uses Replit Auth — there is no separate sign-up flow.
+ * Orbitron now uses Replit Auth — there is no separate sign-up flow.
  * /api/login will create a user record on the user's first successful login.
  */
 export default function Signup() {
@@ -23,7 +23,7 @@ export default function Signup() {
           </div>
         </Link>
 
-        <h1 className="text-2xl font-bold tracking-tight mb-2">Create your Switchboard account</h1>
+        <h1 className="text-2xl font-bold tracking-tight mb-2">Create your Orbitron account</h1>
         <p className="text-muted-foreground text-sm mb-8 font-mono">
           Redirecting you to Replit to continue…
         </p>

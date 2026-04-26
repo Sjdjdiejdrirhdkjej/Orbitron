@@ -35,7 +35,7 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   usageAlertThresholdCents: 5000,
 };
 
-const PREFS_STORAGE_KEY = "switchboard.preferences.v1";
+const PREFS_STORAGE_KEY = "orbitron.preferences.v1";
 
 // Load preferences from localStorage or use defaults
 function loadLocalPreferences(): UserPreferences {
@@ -388,7 +388,7 @@ export default function Settings() {
                   <div>
                     <h3 className="text-lg font-bold">Recent sign-ins</h3>
                     <p className="text-xs sm:text-sm text-muted-foreground font-mono mt-1">
-                      Active Switchboard sessions for your account.
+                      Active Orbitron sessions for your account.
                     </p>
                   </div>
                   <button
@@ -521,7 +521,7 @@ export default function Settings() {
             <div className="space-y-6">
               <p className="text-sm text-muted-foreground mb-6">
                 Provide your own provider API keys. We'll route requests to these providers using your keys instead of billing you per token. 
-                Switchboard charges a flat $20/mo routing fee per active BYOK provider.
+                Orbitron charges a flat $20/mo routing fee per active BYOK provider.
               </p>
               
               <div className="space-y-4">

@@ -111,7 +111,7 @@ var models = [
     id: "gpt-4.1",
     name: "GPT-4.1",
     provider: "OpenAI",
-    contextWindow: 256000,
+    contextWindow: 256e3,
     inputPrice: 2,
     outputPrice: 8,
     throughput: 80,
@@ -123,7 +123,7 @@ var models = [
     id: "gpt-4.1-mini",
     name: "GPT-4.1 mini",
     provider: "OpenAI",
-    contextWindow: 256000,
+    contextWindow: 256e3,
     inputPrice: 0.5,
     outputPrice: 2,
     throughput: 180,
@@ -397,6 +397,15 @@ async function ensureSchema() {
     );
     CREATE INDEX IF NOT EXISTS api_keys_user_id_idx ON api_keys(user_id);
 
+    -- Auto-provisioned dashboard keys are hidden from the user's Keys page and
+    -- cannot be revoked from the UI. The dashboard SPA fetches one on load and
+    -- uses it as a Bearer token for /api/chat and /api/images so all API
+    -- traffic \u2014 first-party or third-party \u2014 is uniformly key-authenticated.
+    ALTER TABLE api_keys
+      ADD COLUMN IF NOT EXISTS is_dashboard BOOLEAN NOT NULL DEFAULT FALSE;
+    CREATE INDEX IF NOT EXISTS api_keys_user_dashboard_idx
+      ON api_keys(user_id) WHERE is_dashboard = TRUE;
+
     -- Real usage events. Every successful chat / image request appends one row.
     -- Powers /api/usage analytics and the measured latency/throughput shown on
     -- the Models catalog. Errors are recorded with success=false so error-rate
@@ -419,6 +428,16 @@ async function ensureSchema() {
       ON usage_events(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS usage_events_model_created_idx
       ON usage_events(model_id, created_at DESC);
+
+    -- Attribute every usage event to the API key that authorized it. Nullable
+    -- to preserve any rows recorded before keys became mandatory; ON DELETE
+    -- SET NULL so rotating the auto-provisioned dashboard key doesn't wipe its
+    -- historical usage from analytics.
+    ALTER TABLE usage_events
+      ADD COLUMN IF NOT EXISTS api_key_id UUID
+      REFERENCES api_keys(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS usage_events_api_key_created_idx
+      ON usage_events(api_key_id, created_at DESC) WHERE api_key_id IS NOT NULL;
 
     -- Credit balance lives on the user row for cheap reads. Stored as integer
     -- cents to avoid floating-point drift. Two grant timestamps double as
@@ -454,6 +473,21 @@ async function ensureSchema() {
       ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS usage_alert_threshold_cents INTEGER NOT NULL DEFAULT 5000;
+
+    -- Public read-only conversation snapshots. The slug is the public URL
+    -- segment (/share/:slug). The snapshot column stores the title + ordered
+    -- messages exactly as they were at publish time so future edits don't
+    -- mutate the share. Owner can revoke (we DELETE the row).
+    CREATE TABLE IF NOT EXISTS shared_chats (
+      slug TEXT PRIMARY KEY,
+      user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      model_id TEXT,
+      snapshot JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS shared_chats_user_idx
+      ON shared_chats(user_id, created_at DESC);
   `);
   await pool.query(`
     WITH eligible AS (
@@ -872,188 +906,17 @@ function registerSessionRoutes(app2) {
   });
 }
 
-// server/auth.ts
-var KEY_PREFIX = "sk-sb-v1-";
-function lookupHash(secret) {
-  return createHash("sha256").update(secret).digest("hex");
-}
-function generateApiKey() {
-  const raw = randomBytes(32).toString("base64url");
-  const full = `${KEY_PREFIX}${raw}`;
-  const prefix = full.slice(0, KEY_PREFIX.length + 6);
-  return { full, prefix, lookup: lookupHash(full) };
-}
-function rowToUser2(r) {
-  return {
-    id: r.id,
-    email: r.email,
-    firstName: r.first_name,
-    lastName: r.last_name,
-    profileImageUrl: r.profile_image_url
-  };
-}
-async function getUserFromBearer(token) {
-  if (!token.startsWith(KEY_PREFIX)) return null;
-  const lookup = lookupHash(token);
-  const result = await query(
-    `SELECT u.id, u.email, u.first_name, u.last_name, u.profile_image_url,
-            k.id AS key_id, k.revoked_at
-       FROM api_keys k
-       JOIN users u ON u.id = k.user_id
-      WHERE k.lookup_hash = $1`,
-    [lookup]
-  );
-  const row = result.rows[0];
-  if (!row) return null;
-  if (row.revoked_at) return null;
-  query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1", [row.key_id]).catch(
-    (err) => console.error("Failed to update last_used_at:", err)
-  );
-  return { user: rowToUser2(row), keyId: row.key_id };
-}
-async function getSessionUser(req) {
-  if (!req.isAuthenticated || !req.isAuthenticated()) return null;
-  const claims = req.user?.claims;
-  const userId = claims?.sub;
-  if (!userId) return null;
-  const result = await query(
-    `SELECT id, email, first_name, last_name, profile_image_url
-       FROM users WHERE id = $1`,
-    [userId]
-  );
-  const row = result.rows[0];
-  return row ? rowToUser2(row) : null;
-}
-async function resolveAuth(req) {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
-    const token = authHeader.slice(7).trim();
-    if (token) {
-      const result = await getUserFromBearer(token);
-      if (result) {
-        return { user: result.user, via: "api_key", apiKeyId: result.keyId };
-      }
-      return null;
-    }
-  }
-  const user = await getSessionUser(req);
-  if (user) {
-    return { user, via: "session" };
-  }
-  return null;
-}
-async function requireAuth(req, res, next) {
-  const ctx = await resolveAuth(req);
-  if (!ctx) {
-    return res.status(401).json({
-      error: {
-        message: "Authentication required. Sign in with Replit, or pass 'Authorization: Bearer <api key>'. Generate a key at /keys.",
-        type: "unauthorized"
-      }
-    });
-  }
-  req.auth = ctx;
-  next();
-}
-function requireSession(req, res, next) {
-  isAuthenticated(req, res, async (err) => {
-    if (err) return next(err);
-    const user = await getSessionUser(req);
-    if (!user) {
-      return res.status(401).json({
-        error: { message: "You must be signed in.", type: "unauthorized" }
-      });
-    }
-    req.auth = { user, via: "session" };
-    next();
-  });
-}
-function registerKeyRoutes(app2) {
-  app2.get("/api/keys", requireSession, async (req, res) => {
-    const userId = req.auth.user.id;
-    const result = await query(
-      `SELECT id, user_id, name, prefix, monthly_cap_cents, created_at, last_used_at, revoked_at
-         FROM api_keys
-        WHERE user_id = $1
-        ORDER BY created_at DESC`,
-      [userId]
-    );
-    res.json({
-      data: result.rows.map((k) => ({
-        id: k.id,
-        name: k.name,
-        prefix: k.prefix,
-        monthlyCapCents: k.monthly_cap_cents,
-        createdAt: k.created_at,
-        lastUsedAt: k.last_used_at,
-        revokedAt: k.revoked_at
-      }))
-    });
-  });
-  app2.post("/api/keys", requireSession, async (req, res) => {
-    const userId = req.auth.user.id;
-    const { name, monthlyCapCents } = req.body || {};
-    const cleanName = typeof name === "string" ? name.trim().slice(0, 80) : "";
-    if (!cleanName) {
-      return res.status(400).json({ error: { message: "Name is required." } });
-    }
-    let cap = null;
-    if (monthlyCapCents !== void 0 && monthlyCapCents !== null) {
-      const n = Number(monthlyCapCents);
-      if (!Number.isFinite(n) || n < 0) {
-        return res.status(400).json({ error: { message: "Cap must be a positive number." } });
-      }
-      cap = Math.floor(n);
-    }
-    const { full, prefix, lookup } = generateApiKey();
-    const result = await query(
-      `INSERT INTO api_keys (user_id, name, prefix, lookup_hash, monthly_cap_cents)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, user_id, name, prefix, monthly_cap_cents, created_at, last_used_at, revoked_at`,
-      [userId, cleanName, prefix, lookup, cap]
-    );
-    const k = result.rows[0];
-    res.status(201).json({
-      key: full,
-      // only returned this one time
-      record: {
-        id: k.id,
-        name: k.name,
-        prefix: k.prefix,
-        monthlyCapCents: k.monthly_cap_cents,
-        createdAt: k.created_at,
-        lastUsedAt: k.last_used_at,
-        revokedAt: k.revoked_at
-      }
-    });
-  });
-  app2.delete("/api/keys/:id", requireSession, async (req, res) => {
-    const userId = req.auth.user.id;
-    const { id } = req.params;
-    const result = await query(
-      `UPDATE api_keys
-          SET revoked_at = NOW()
-        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
-        RETURNING id`,
-      [id, userId]
-    );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: { message: "Key not found." } });
-    }
-    res.json({ ok: true });
-  });
-}
-
 // server/usage.ts
 async function recordUsage(input) {
   try {
     await query(
       `INSERT INTO usage_events
-         (user_id, kind, model_id, provider, input_tokens, output_tokens,
-          cost_usd, latency_ms, total_ms, success)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         (user_id, api_key_id, kind, model_id, provider, input_tokens,
+          output_tokens, cost_usd, latency_ms, total_ms, success)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         input.userId,
+        input.apiKeyId ?? null,
         input.kind,
         input.modelId,
         input.provider,
@@ -1068,6 +931,83 @@ async function recordUsage(input) {
   } catch (err) {
     console.error("recordUsage failed:", err);
   }
+}
+async function getKeyUsageSummary(apiKeyId, windowDays = 30) {
+  const days = Math.max(1, Math.min(90, Math.floor(windowDays)));
+  const totalsRes = await query(
+    `SELECT
+       COUNT(*)::text                                     AS requests,
+       COALESCE(SUM(input_tokens), 0)::text              AS input_tokens,
+       COALESCE(SUM(output_tokens), 0)::text             AS output_tokens,
+       COALESCE(SUM(cost_usd), 0)::text                  AS cost_usd,
+       COUNT(*) FILTER (WHERE success = FALSE)::text     AS errors
+     FROM usage_events
+     WHERE api_key_id = $1
+       AND created_at >= NOW() - ($2 || ' days')::interval`,
+    [apiKeyId, days]
+  );
+  const t = totalsRes.rows[0];
+  const requests = Number(t?.requests ?? 0);
+  const dailyRes = await query(
+    `SELECT
+       to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
+       COALESCE(SUM(cost_usd), 0)::text                     AS cost_usd,
+       COUNT(*)::text                                       AS requests
+     FROM usage_events
+     WHERE api_key_id = $1
+       AND created_at >= NOW() - ($2 || ' days')::interval
+     GROUP BY 1
+     ORDER BY 1 ASC`,
+    [apiKeyId, days]
+  );
+  const dailyMap = new Map(
+    dailyRes.rows.map((r) => [
+      r.day,
+      { costUsd: Number(r.cost_usd), requests: Number(r.requests) }
+    ])
+  );
+  const daily = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = /* @__PURE__ */ new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const entry = dailyMap.get(key);
+    daily.push({
+      date: key,
+      costUsd: entry?.costUsd ?? 0,
+      requests: entry?.requests ?? 0
+    });
+  }
+  const topRes = await query(
+    `SELECT model_id, provider,
+            COUNT(*)::text                       AS requests,
+            COALESCE(SUM(cost_usd), 0)::text    AS cost_usd
+     FROM usage_events
+     WHERE api_key_id = $1
+       AND created_at >= NOW() - ($2 || ' days')::interval
+     GROUP BY model_id, provider
+     ORDER BY COUNT(*) DESC
+     LIMIT 5`,
+    [apiKeyId, days]
+  );
+  return {
+    windowDays: days,
+    totals: {
+      requests,
+      inputTokens: Number(t?.input_tokens ?? 0),
+      outputTokens: Number(t?.output_tokens ?? 0),
+      costUsd: Number(t?.cost_usd ?? 0),
+      errorRate: requests > 0 ? Number(t?.errors ?? 0) / requests : 0
+    },
+    daily,
+    topModels: topRes.rows.map((r) => ({
+      modelId: r.model_id,
+      provider: r.provider,
+      requests: Number(r.requests),
+      costUsd: Number(r.cost_usd)
+    }))
+  };
 }
 async function getUsageSummary(userId, windowDays = 30) {
   const days = Math.max(1, Math.min(90, Math.floor(windowDays)));
@@ -1193,6 +1133,340 @@ async function getMeasuredModelStats() {
 }
 function providerForModel(modelId) {
   return models.find((m) => m.id === modelId)?.provider ?? "Unknown";
+}
+
+// server/auth.ts
+var KEY_PREFIX = "sk-sb-v1-";
+function lookupHash(secret) {
+  return createHash("sha256").update(secret).digest("hex");
+}
+function generateApiKey() {
+  const raw = randomBytes(32).toString("base64url");
+  const full = `${KEY_PREFIX}${raw}`;
+  const prefix = full.slice(0, KEY_PREFIX.length + 6);
+  return { full, prefix, lookup: lookupHash(full) };
+}
+function rowToUser2(r) {
+  return {
+    id: r.id,
+    email: r.email,
+    firstName: r.first_name,
+    lastName: r.last_name,
+    profileImageUrl: r.profile_image_url
+  };
+}
+async function getUserFromBearer(token) {
+  if (!token.startsWith(KEY_PREFIX)) return null;
+  const lookup = lookupHash(token);
+  const result = await query(
+    `SELECT u.id, u.email, u.first_name, u.last_name, u.profile_image_url,
+            k.id AS key_id, k.revoked_at
+       FROM api_keys k
+       JOIN users u ON u.id = k.user_id
+      WHERE k.lookup_hash = $1`,
+    [lookup]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  if (row.revoked_at) return null;
+  query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1", [row.key_id]).catch(
+    (err) => console.error("Failed to update last_used_at:", err)
+  );
+  return { user: rowToUser2(row), keyId: row.key_id };
+}
+async function rotateDashboardKey(userId) {
+  await query(
+    `DELETE FROM api_keys WHERE user_id = $1 AND is_dashboard = TRUE`,
+    [userId]
+  );
+  const { full, prefix, lookup } = generateApiKey();
+  await query(
+    `INSERT INTO api_keys (user_id, name, prefix, lookup_hash, is_dashboard)
+     VALUES ($1, $2, $3, $4, TRUE)`,
+    [userId, "Dashboard (auto)", prefix, lookup]
+  );
+  return full;
+}
+async function getSessionUser(req) {
+  if (!req.isAuthenticated || !req.isAuthenticated()) return null;
+  const claims = req.user?.claims;
+  const userId = claims?.sub;
+  if (!userId) return null;
+  const result = await query(
+    `SELECT id, email, first_name, last_name, profile_image_url
+       FROM users WHERE id = $1`,
+    [userId]
+  );
+  const row = result.rows[0];
+  return row ? rowToUser2(row) : null;
+}
+async function resolveAuth(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
+    const token = authHeader.slice(7).trim();
+    if (token) {
+      const result = await getUserFromBearer(token);
+      if (result) {
+        return { user: result.user, via: "api_key", apiKeyId: result.keyId };
+      }
+      return null;
+    }
+  }
+  const user = await getSessionUser(req);
+  if (user) {
+    return { user, via: "session" };
+  }
+  return null;
+}
+async function requireAuth(req, res, next) {
+  const ctx = await resolveAuth(req);
+  if (!ctx) {
+    return res.status(401).json({
+      error: {
+        message: "Authentication required. Sign in with Replit, or pass 'Authorization: Bearer <api key>'. Generate a key at /keys.",
+        type: "unauthorized"
+      }
+    });
+  }
+  req.auth = ctx;
+  next();
+}
+async function requireApiKey(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+    return res.status(401).json({
+      error: {
+        message: "Missing API key. Pass 'Authorization: Bearer <api key>'. Generate a key at /keys.",
+        type: "missing_api_key"
+      }
+    });
+  }
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return res.status(401).json({
+      error: { message: "Empty API key.", type: "invalid_api_key" }
+    });
+  }
+  if (!token.startsWith(KEY_PREFIX)) {
+    return res.status(401).json({
+      error: {
+        message: `Invalid API key format. Orbitron keys start with '${KEY_PREFIX}'.`,
+        type: "invalid_api_key"
+      }
+    });
+  }
+  const result = await getUserFromBearer(token);
+  if (!result) {
+    return res.status(401).json({
+      error: {
+        message: "Invalid or revoked API key.",
+        type: "invalid_api_key"
+      }
+    });
+  }
+  req.auth = { user: result.user, via: "api_key", apiKeyId: result.keyId };
+  next();
+}
+function requireSession(req, res, next) {
+  isAuthenticated(req, res, async (err) => {
+    if (err) return next(err);
+    const user = await getSessionUser(req);
+    if (!user) {
+      return res.status(401).json({
+        error: { message: "You must be signed in.", type: "unauthorized" }
+      });
+    }
+    req.auth = { user, via: "session" };
+    next();
+  });
+}
+function registerKeyRoutes(app2) {
+  app2.post(
+    "/api/auth/dashboard-key",
+    requireSession,
+    async (req, res) => {
+      const userId = req.auth.user.id;
+      try {
+        const key = await rotateDashboardKey(userId);
+        res.json({ key });
+      } catch (err) {
+        console.error("Failed to rotate dashboard key:", err);
+        res.status(500).json({ error: { message: "Failed to provision dashboard key" } });
+      }
+    }
+  );
+  app2.get("/api/keys", requireSession, async (req, res) => {
+    const userId = req.auth.user.id;
+    const result = await query(
+      `SELECT id, user_id, name, prefix, monthly_cap_cents, created_at, last_used_at, revoked_at
+         FROM api_keys
+        WHERE user_id = $1 AND is_dashboard = FALSE
+        ORDER BY created_at DESC`,
+      [userId]
+    );
+    res.json({
+      data: result.rows.map((k) => ({
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        monthlyCapCents: k.monthly_cap_cents,
+        createdAt: k.created_at,
+        lastUsedAt: k.last_used_at,
+        revokedAt: k.revoked_at
+      }))
+    });
+  });
+  app2.post("/api/keys", requireSession, async (req, res) => {
+    const userId = req.auth.user.id;
+    const { name, monthlyCapCents } = req.body || {};
+    const cleanName = typeof name === "string" ? name.trim().slice(0, 80) : "";
+    if (!cleanName) {
+      return res.status(400).json({ error: { message: "Name is required." } });
+    }
+    let cap = null;
+    if (monthlyCapCents !== void 0 && monthlyCapCents !== null) {
+      const n = Number(monthlyCapCents);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: { message: "Cap must be a positive number." } });
+      }
+      cap = Math.floor(n);
+    }
+    const { full, prefix, lookup } = generateApiKey();
+    const result = await query(
+      `INSERT INTO api_keys (user_id, name, prefix, lookup_hash, monthly_cap_cents)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, user_id, name, prefix, monthly_cap_cents, created_at, last_used_at, revoked_at`,
+      [userId, cleanName, prefix, lookup, cap]
+    );
+    const k = result.rows[0];
+    res.status(201).json({
+      key: full,
+      // only returned this one time
+      record: {
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        monthlyCapCents: k.monthly_cap_cents,
+        createdAt: k.created_at,
+        lastUsedAt: k.last_used_at,
+        revokedAt: k.revoked_at
+      }
+    });
+  });
+  app2.get(
+    "/api/keys/:id/usage",
+    requireSession,
+    async (req, res) => {
+      const userId = req.auth.user.id;
+      const { id } = req.params;
+      const days = Math.max(
+        1,
+        Math.min(90, Number(req.query.days) || 30)
+      );
+      const owner = await query(
+        `SELECT id FROM api_keys
+          WHERE id = $1 AND user_id = $2 AND is_dashboard = FALSE`,
+        [id, userId]
+      );
+      if (owner.rowCount === 0) {
+        return res.status(404).json({ error: { message: "Key not found." } });
+      }
+      try {
+        const summary = await getKeyUsageSummary(id, days);
+        res.json(summary);
+      } catch (err) {
+        console.error("Per-key usage error:", err);
+        res.status(500).json({ error: { message: "Failed to load key usage" } });
+      }
+    }
+  );
+  app2.delete("/api/keys/:id", requireSession, async (req, res) => {
+    const userId = req.auth.user.id;
+    const { id } = req.params;
+    const result = await query(
+      `UPDATE api_keys
+          SET revoked_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND revoked_at IS NULL
+          AND is_dashboard = FALSE
+        RETURNING id`,
+      [id, userId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Key not found." } });
+    }
+    res.json({ ok: true });
+  });
+}
+
+// server/credits.ts
+async function reserveCredits(userId, amountCents) {
+  if (amountCents <= 0) return 0;
+  try {
+    const result = await query(
+      `UPDATE users
+          SET credit_balance_cents = credit_balance_cents - $2
+        WHERE id = $1
+          AND credit_balance_cents >= $2
+        RETURNING credit_balance_cents`,
+      [userId, amountCents]
+    );
+    if (result.rows.length === 0) return null;
+    return amountCents;
+  } catch (err) {
+    console.error("reserveCredits failed:", err);
+    return null;
+  }
+}
+async function refundCredits(userId, amountCents) {
+  if (amountCents <= 0) return;
+  try {
+    await query(
+      `UPDATE users
+          SET credit_balance_cents = credit_balance_cents + $2
+        WHERE id = $1`,
+      [userId, amountCents]
+    );
+  } catch (err) {
+    console.error("refundCredits failed:", err);
+  }
+}
+async function recordCreditAudit(userId, amountCents, description) {
+  if (amountCents <= 0) return;
+  try {
+    await query(
+      `INSERT INTO credit_grants (user_id, amount_cents, reason, description)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, -amountCents, "usage", description]
+    );
+  } catch (err) {
+    console.error("recordCreditAudit failed:", err);
+  }
+}
+async function getCreditsState(userId) {
+  const userRes = await query(
+    `SELECT credit_balance_cents,
+            welcome_credit_granted_at,
+            legacy_credit_granted_at
+       FROM users WHERE id = $1`,
+    [userId]
+  );
+  const grantsRes = await query(
+    `SELECT id, amount_cents, reason, description, created_at
+       FROM credit_grants
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 50`,
+    [userId]
+  );
+  const row = userRes.rows[0];
+  return {
+    balanceCents: row?.credit_balance_cents ?? 0,
+    welcomeGrantedAt: row?.welcome_credit_granted_at ?? null,
+    legacyGrantedAt: row?.legacy_credit_granted_at ?? null,
+    grants: grantsRes.rows
+  };
 }
 
 // server/tools.ts
@@ -1324,6 +1598,8 @@ var geminiMap = {
   "gemini-2.0-flash-thinking": "gemini-2.0-flash-thinking"
 };
 var MAX_TOOL_ITERATIONS = 4;
+var MAX_OUTPUT_TOKENS_HARD_CAP = 8192;
+var MAX_MESSAGES_PER_REQUEST = 200;
 function approxTokens(text) {
   return Math.max(1, Math.ceil(text.length / 4));
 }
@@ -1351,6 +1627,7 @@ async function runToolCall(callId, name, args, ctx) {
 }
 async function runOpenAI(opts) {
   const isReasoning = opts.model.startsWith("gpt-5") || opts.model.startsWith("o");
+  const reasoningEffort = isReasoning ? opts.reasoningLevel ?? "medium" : void 0;
   const messages = opts.messages.map((m) => ({
     role: m.role,
     content: m.content
@@ -1369,11 +1646,15 @@ ${TOOLS_SYSTEM_HINT}`
     }
   }
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS + 1; iter++) {
+    const roundInputTokens = approxTokens(
+      messages.map((m) => typeof m.content === "string" ? m.content : JSON.stringify(m.content)).join("\n")
+    );
     const stream = await openai.chat.completions.create({
       model: opts.model,
       messages,
       stream: true,
       ...isReasoning ? {} : { temperature: opts.temperature ?? 0.7 },
+      ...reasoningEffort ? { reasoning_effort: reasoningEffort } : {},
       max_completion_tokens: opts.maxTokens ?? 4096,
       ...opts.useTools && iter < MAX_TOOL_ITERATIONS ? { tools: [WEB_SEARCH_OPENAI_TOOL] } : {}
     });
@@ -1404,6 +1685,8 @@ ${TOOLS_SYSTEM_HINT}`
       }
     }
     const completedToolCalls = toolCalls.filter((t) => t && t.function.name);
+    const roundOutputTokens = approxTokens(assistantText) + (completedToolCalls.length > 0 ? approxTokens(JSON.stringify(completedToolCalls)) : 0);
+    opts.ctx.onRoundComplete(roundInputTokens, roundOutputTokens);
     if (completedToolCalls.length === 0) return;
     messages.push({
       role: "assistant",
@@ -1446,6 +1729,11 @@ ${TOOLS_SYSTEM_HINT}` : TOOLS_SYSTEM_HINT;
     content: m.content
   }));
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS + 1; iter++) {
+    const roundInputTokens = approxTokens(systemMessages || "") + approxTokens(
+      turns.map(
+        (t) => typeof t.content === "string" ? t.content : JSON.stringify(t.content)
+      ).join("\n")
+    );
     const stream = anthropic.messages.stream({
       model: opts.model,
       max_tokens: opts.maxTokens ?? 4096,
@@ -1454,15 +1742,20 @@ ${TOOLS_SYSTEM_HINT}` : TOOLS_SYSTEM_HINT;
       messages: turns,
       ...opts.useTools && iter < MAX_TOOL_ITERATIONS ? { tools: [WEB_SEARCH_ANTHROPIC_TOOL] } : {}
     });
+    let assistantText = "";
     for await (const event of stream) {
       if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
-        opts.ctx.onText(event.delta.text || "");
+        const t = event.delta.text || "";
+        assistantText += t;
+        opts.ctx.onText(t);
       }
     }
     const finalMsg = await stream.finalMessage();
     const toolUses = (finalMsg.content || []).filter(
       (b) => b.type === "tool_use"
     );
+    const roundOutputTokens = approxTokens(assistantText) + (toolUses.length > 0 ? approxTokens(JSON.stringify(toolUses)) : 0);
+    opts.ctx.onRoundComplete(roundInputTokens, roundOutputTokens);
     if (finalMsg.stop_reason !== "tool_use" || toolUses.length === 0) return;
     turns.push({ role: "assistant", content: finalMsg.content });
     const toolResults = [];
@@ -1503,14 +1796,21 @@ ${TOOLS_SYSTEM_HINT}` : TOOLS_SYSTEM_HINT;
     if (opts.useTools && iter < MAX_TOOL_ITERATIONS) {
       config.tools = [WEB_SEARCH_GEMINI_TOOL];
     }
+    const roundInputTokens = approxTokens(systemMessages || "") + approxTokens(
+      contents.flatMap((c) => (c.parts ?? []).map((p) => p.text ?? JSON.stringify(p))).join("\n")
+    );
     const stream = await gemini.models.generateContentStream({
       model: opts.model,
       contents,
       config
     });
     const functionCalls = [];
+    let assistantText = "";
     for await (const chunk of stream) {
-      if (chunk.text) opts.ctx.onText(chunk.text);
+      if (chunk.text) {
+        assistantText += chunk.text;
+        opts.ctx.onText(chunk.text);
+      }
       const parts = chunk.candidates?.[0]?.content?.parts ?? [];
       for (const part of parts) {
         if (part.functionCall?.name) {
@@ -1522,6 +1822,8 @@ ${TOOLS_SYSTEM_HINT}` : TOOLS_SYSTEM_HINT;
         }
       }
     }
+    const roundOutputTokens = approxTokens(assistantText) + (functionCalls.length > 0 ? approxTokens(JSON.stringify(functionCalls)) : 0);
+    opts.ctx.onRoundComplete(roundInputTokens, roundOutputTokens);
     if (functionCalls.length === 0) return;
     contents.push({
       role: "model",
@@ -1545,19 +1847,69 @@ ${TOOLS_SYSTEM_HINT}` : TOOLS_SYSTEM_HINT;
   }
 }
 function registerChatRoutes(app2) {
-  app2.post("/api/chat", requireAuth, async (req, res) => {
+  app2.post("/api/chat", requireApiKey, async (req, res) => {
     const {
       modelId,
       messages,
       temperature,
       maxTokens,
-      tools: clientTools
+      tools: clientTools,
+      reasoningLevel
     } = req.body || {};
     if (!modelId || !Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: "modelId and messages are required" });
+      return res.status(400).json({
+        error: { message: "modelId and messages are required", type: "invalid_request" }
+      });
     }
-    const useWebSearch = !!clientTools?.webSearch;
+    if (messages.length > MAX_MESSAGES_PER_REQUEST) {
+      return res.status(400).json({
+        error: {
+          message: `Too many messages (max ${MAX_MESSAGES_PER_REQUEST}).`,
+          type: "invalid_request"
+        }
+      });
+    }
     const catalogEntry = models.find((m) => m.id === modelId);
+    if (!catalogEntry) {
+      return res.status(400).json({
+        error: { message: `Unsupported model: ${modelId}`, type: "invalid_request" }
+      });
+    }
+    if (!(modelId in openAIMap) && !(modelId in anthropicMap) && !(modelId in geminiMap)) {
+      return res.status(400).json({
+        error: { message: `Unsupported model: ${modelId}`, type: "invalid_request" }
+      });
+    }
+    const requestedMaxTokens = Number(maxTokens);
+    const effectiveMaxTokens = Math.max(
+      1,
+      Math.min(
+        Number.isFinite(requestedMaxTokens) && requestedMaxTokens > 0 ? Math.floor(requestedMaxTokens) : 4096,
+        MAX_OUTPUT_TOKENS_HARD_CAP
+      )
+    );
+    const useWebSearch = !!clientTools?.webSearch;
+    const userId = req.auth.user.id;
+    const apiKeyId = req.auth.apiKeyId ?? null;
+    const inputTokensEstimate = approxTokens(
+      messages.map((m) => m.content ?? "").join("\n")
+    );
+    const roundsForReservation = useWebSearch ? MAX_TOOL_ITERATIONS + 1 : 1;
+    const worstCaseCostUsd = inputTokensEstimate * roundsForReservation / 1e6 * catalogEntry.inputPrice + effectiveMaxTokens * roundsForReservation / 1e6 * catalogEntry.outputPrice;
+    const reservationCents = Math.max(
+      1,
+      Math.ceil(worstCaseCostUsd * 100)
+    );
+    const reserved = await reserveCredits(userId, reservationCents);
+    if (reserved === null) {
+      return res.status(402).json({
+        error: {
+          message: "Insufficient credits. Add more credits to continue using the API.",
+          type: "insufficient_credits",
+          requiredCents: reservationCents
+        }
+      });
+    }
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -1571,7 +1923,8 @@ function registerChatRoutes(app2) {
     const startTime = Date.now();
     let firstTokenMs = 0;
     let outputText = "";
-    const inputTokens = approxTokens(messages.map((m) => m.content).join("\n"));
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
     const ctx = {
       onText(delta) {
         if (!delta) return;
@@ -1587,16 +1940,22 @@ function registerChatRoutes(app2) {
       },
       onToolError(callId, error) {
         send({ tool: { phase: "error", callId, error } });
+      },
+      onRoundComplete(inT, outT) {
+        totalInputTokens += inT;
+        totalOutputTokens += outT;
       }
     };
+    let success = false;
     try {
       if (modelId in openAIMap) {
         await runOpenAI({
           model: openAIMap[modelId],
           messages,
           temperature,
-          maxTokens,
+          maxTokens: effectiveMaxTokens,
           useTools: useWebSearch,
+          reasoningLevel,
           ctx
         });
       } else if (modelId in anthropicMap) {
@@ -1604,65 +1963,69 @@ function registerChatRoutes(app2) {
           model: anthropicMap[modelId],
           messages,
           temperature,
-          maxTokens,
-          useTools: useWebSearch,
-          ctx
-        });
-      } else if (modelId in geminiMap) {
-        await runGemini({
-          model: geminiMap[modelId],
-          messages,
-          temperature,
-          maxTokens,
+          maxTokens: effectiveMaxTokens,
           useTools: useWebSearch,
           ctx
         });
       } else {
-        send({ error: `Unsupported model: ${modelId}` });
-        return res.end();
+        await runGemini({
+          model: geminiMap[modelId],
+          messages,
+          temperature,
+          maxTokens: effectiveMaxTokens,
+          useTools: useWebSearch,
+          ctx
+        });
       }
-      const outputTokens = approxTokens(outputText);
-      const totalTime = Date.now() - startTime;
-      const cost = catalogEntry ? inputTokens / 1e6 * catalogEntry.inputPrice + outputTokens / 1e6 * catalogEntry.outputPrice : 0;
-      send({
-        done: true,
-        latencyMs: firstTokenMs,
-        totalMs: totalTime,
-        inputTokens,
-        outputTokens,
-        cost
-      });
-      res.end();
-      void recordUsage({
-        userId: req.auth.user.id,
-        kind: "chat",
-        modelId,
-        provider: catalogEntry?.provider ?? providerForModel(modelId),
-        inputTokens,
-        outputTokens,
-        costUsd: cost,
-        latencyMs: firstTokenMs || null,
-        totalMs: totalTime,
-        success: true
-      });
+      success = true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Chat request failed";
       console.error("Chat error:", err);
       send({ error: message });
-      void recordUsage({
-        userId: req.auth.user.id,
-        kind: "chat",
-        modelId,
-        provider: catalogEntry?.provider ?? providerForModel(modelId),
-        inputTokens,
-        outputTokens: approxTokens(outputText),
-        costUsd: 0,
-        latencyMs: firstTokenMs || null,
-        totalMs: Date.now() - startTime,
-        success: false
-      });
-      res.end();
     }
+    if (totalInputTokens === 0) totalInputTokens = inputTokensEstimate;
+    if (totalOutputTokens === 0) totalOutputTokens = approxTokens(outputText);
+    const actualCostUsd = totalInputTokens / 1e6 * catalogEntry.inputPrice + totalOutputTokens / 1e6 * catalogEntry.outputPrice;
+    const actualCostCents = Math.min(
+      reservationCents,
+      Math.max(0, Math.ceil(actualCostUsd * 100))
+    );
+    const refundCents = reservationCents - actualCostCents;
+    if (refundCents > 0) {
+      await refundCredits(userId, refundCents);
+    }
+    if (actualCostCents > 0) {
+      void recordCreditAudit(
+        userId,
+        actualCostCents,
+        `${modelId} \u2014 ${totalInputTokens} in / ${totalOutputTokens} out`
+      );
+    }
+    if (success) {
+      const totalTime = Date.now() - startTime;
+      send({
+        done: true,
+        latencyMs: firstTokenMs,
+        totalMs: totalTime,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        cost: actualCostCents / 100
+      });
+    }
+    res.end();
+    void recordUsage({
+      userId,
+      apiKeyId,
+      kind: "chat",
+      modelId,
+      provider: catalogEntry.provider ?? providerForModel(modelId),
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      costUsd: actualCostCents / 100,
+      latencyMs: firstTokenMs || null,
+      totalMs: Date.now() - startTime,
+      success
+    });
   });
 }
 
@@ -1670,34 +2033,7 @@ function registerChatRoutes(app2) {
 import OpenAI2 from "openai";
 import Anthropic2 from "@anthropic-ai/sdk";
 import { GoogleGenAI as GoogleGenAI2 } from "@google/genai";
-
-// server/credits.ts
-async function getCreditsState(userId) {
-  const userRes = await query(
-    `SELECT credit_balance_cents,
-            welcome_credit_granted_at,
-            legacy_credit_granted_at
-       FROM users WHERE id = $1`,
-    [userId]
-  );
-  const grantsRes = await query(
-    `SELECT id, amount_cents, reason, description, created_at
-       FROM credit_grants
-      WHERE user_id = $1
-      ORDER BY created_at DESC
-      LIMIT 50`,
-    [userId]
-  );
-  const row = userRes.rows[0];
-  return {
-    balanceCents: row?.credit_balance_cents ?? 0,
-    welcomeGrantedAt: row?.welcome_credit_granted_at ?? null,
-    legacyGrantedAt: row?.legacy_credit_granted_at ?? null,
-    grants: grantsRes.rows
-  };
-}
-
-// server/api.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
 var openai2 = new OpenAI2({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
@@ -1740,6 +2076,27 @@ async function pingProvider(name, fn, timeoutMs = 8e3) {
 var statusCache = null;
 var STATUS_TTL_MS = 3e4;
 var IMAGE_MODEL_IDS = ["gpt-image-1", "gemini-2.5-flash-image"];
+var IMAGE_PRICE_USD = {
+  "gpt-image-1": 0.04,
+  "gemini-2.5-flash-image": 0.039
+};
+var IMAGE_PROMPT_MAX_LEN = 4e3;
+var ACCOUNT_DELETE_MAX = 5;
+var ACCOUNT_DELETE_WINDOW_MS = 15 * 60 * 1e3;
+var accountDeleteAttempts = /* @__PURE__ */ new Map();
+function checkAccountDeleteRate(userId) {
+  const now = Date.now();
+  const cutoff = now - ACCOUNT_DELETE_WINDOW_MS;
+  const prev = accountDeleteAttempts.get(userId) ?? [];
+  const recent = prev.filter((t) => t > cutoff);
+  if (recent.length >= ACCOUNT_DELETE_MAX) {
+    accountDeleteAttempts.set(userId, recent);
+    return false;
+  }
+  recent.push(now);
+  accountDeleteAttempts.set(userId, recent);
+  return true;
+}
 function registerApiRoutes(app2) {
   app2.get("/api/status", async (_req, res) => {
     if (statusCache && statusCache.expires > Date.now()) {
@@ -1881,7 +2238,7 @@ function registerApiRoutes(app2) {
       res.status(500).json({ error: { message: "Failed to load credits" } });
     }
   });
-  app2.post("/api/images", requireAuth, async (req, res) => {
+  app2.post("/api/images", requireApiKey, async (req, res) => {
     const {
       prompt,
       size = "1024x1024",
@@ -1891,8 +2248,14 @@ function registerApiRoutes(app2) {
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: { message: "prompt is required" } });
     }
-    if (n < 1 || n > 4) {
-      return res.status(400).json({ error: { message: "n must be between 1 and 4" } });
+    if (prompt.length > IMAGE_PROMPT_MAX_LEN) {
+      return res.status(400).json({
+        error: { message: `Prompt too long (max ${IMAGE_PROMPT_MAX_LEN} chars).` }
+      });
+    }
+    const requestedN = Number(n);
+    if (!Number.isInteger(requestedN) || requestedN < 1 || requestedN > 4) {
+      return res.status(400).json({ error: { message: "n must be an integer between 1 and 4" } });
     }
     if (!IMAGE_MODEL_IDS.includes(model)) {
       return res.status(400).json({
@@ -1901,10 +2264,27 @@ function registerApiRoutes(app2) {
     }
     const startTime = Date.now();
     const userId = req.auth.user.id;
+    const apiKeyId = req.auth.apiKeyId ?? null;
+    const modelId = model;
+    const perImageUsd = IMAGE_PRICE_USD[modelId];
+    const reservationCents = Math.max(1, Math.ceil(perImageUsd * requestedN * 100));
+    const reserved = await reserveCredits(userId, reservationCents);
+    if (reserved === null) {
+      return res.status(402).json({
+        error: {
+          message: "Insufficient credits. Add more credits to continue using the API.",
+          type: "insufficient_credits",
+          requiredCents: reservationCents
+        }
+      });
+    }
+    let imagesReturned = 0;
+    let success = false;
     try {
-      if (model === "gemini-2.5-flash-image") {
+      let data;
+      if (modelId === "gemini-2.5-flash-image") {
         const calls = Array.from(
-          { length: n },
+          { length: requestedN },
           () => gemini2.models.generateContent({
             model: "gemini-2.5-flash-image",
             contents: prompt,
@@ -1912,7 +2292,7 @@ function registerApiRoutes(app2) {
           })
         );
         const results = await Promise.all(calls);
-        const data2 = results.map((r) => {
+        data = results.map((r) => {
           const parts = r.candidates?.[0]?.content?.parts ?? [];
           const imgPart = parts.find(
             (p) => !!p?.inlineData?.data
@@ -1922,70 +2302,149 @@ function registerApiRoutes(app2) {
             revised_prompt: null
           };
         });
-        const totalMs2 = Date.now() - startTime;
-        const imagesReturned2 = data2.filter((d) => d.b64_json).length;
-        void recordUsage({
-          userId,
-          kind: "image",
-          modelId: "gemini-2.5-flash-image",
-          provider: providerForModel("gemini-2.5-flash-image") || "Google",
-          inputTokens: 0,
-          outputTokens: imagesReturned2,
-          costUsd: 0,
-          latencyMs: totalMs2,
-          totalMs: totalMs2,
-          success: imagesReturned2 > 0
+      } else {
+        const response = await openai2.images.generate({
+          model: "gpt-image-1",
+          prompt,
+          size,
+          n: requestedN
         });
-        return res.json({
-          model: "gemini-2.5-flash-image",
-          latencyMs: totalMs2,
-          data: data2
-        });
+        data = (response.data ?? []).map((img) => ({
+          b64_json: img.b64_json ?? null,
+          revised_prompt: img.revised_prompt ?? null
+        }));
       }
-      const response = await openai2.images.generate({
-        model: "gpt-image-1",
-        prompt,
-        size,
-        n
-      });
-      const data = (response.data ?? []).map((img) => ({
-        b64_json: img.b64_json ?? null,
-        revised_prompt: img.revised_prompt ?? null
-      }));
+      imagesReturned = data.filter((d) => d.b64_json).length;
+      success = imagesReturned > 0;
       const totalMs = Date.now() - startTime;
-      const imagesReturned = data.filter((d) => d.b64_json).length;
-      const perImageCost = 0.04;
-      void recordUsage({
-        userId,
-        kind: "image",
-        modelId: "gpt-image-1",
-        provider: providerForModel("gpt-image-1") || "OpenAI",
-        inputTokens: 0,
-        outputTokens: imagesReturned,
-        costUsd: perImageCost * imagesReturned,
-        latencyMs: totalMs,
-        totalMs,
-        success: imagesReturned > 0
-      });
-      res.json({
-        model: "gpt-image-1",
-        latencyMs: totalMs,
-        data
-      });
+      res.json({ model: modelId, latencyMs: totalMs, data });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Image generation failed";
       console.error("Image generation error:", err);
+      res.status(500).json({ error: { message } });
+    } finally {
+      const actualCostCents = Math.min(
+        reservationCents,
+        Math.ceil(perImageUsd * imagesReturned * 100)
+      );
+      const refundCents = reservationCents - actualCostCents;
+      if (refundCents > 0) await refundCredits(userId, refundCents);
+      if (actualCostCents > 0) {
+        void recordCreditAudit(
+          userId,
+          actualCostCents,
+          `${modelId} \u2014 ${imagesReturned} image${imagesReturned === 1 ? "" : "s"}`
+        );
+      }
       void recordUsage({
         userId,
+        apiKeyId,
         kind: "image",
-        modelId: model,
-        provider: providerForModel(model) || "Unknown",
+        modelId,
+        provider: providerForModel(modelId) || "Unknown",
+        inputTokens: 0,
+        outputTokens: imagesReturned,
+        costUsd: actualCostCents / 100,
         latencyMs: Date.now() - startTime,
         totalMs: Date.now() - startTime,
-        success: false
+        success
       });
-      res.status(500).json({ error: { message } });
     }
+  });
+  app2.post("/api/share", requireAuth, async (req, res) => {
+    const userId = req.user.claims.sub;
+    const body = req.body;
+    const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 200) : "Untitled chat";
+    const modelId = typeof body.modelId === "string" ? body.modelId.slice(0, 100) : null;
+    if (!Array.isArray(body.messages) || body.messages.length === 0) {
+      return res.status(400).json({ error: { message: "messages must be a non-empty array" } });
+    }
+    const snapshot = { title, modelId, messages: body.messages };
+    const serialized = JSON.stringify(snapshot);
+    if (serialized.length > 1e6) {
+      return res.status(413).json({ error: { message: "Conversation is too large to share" } });
+    }
+    const slug = randomBytes2(9).toString("base64url");
+    await query(
+      `INSERT INTO shared_chats (slug, user_id, title, model_id, snapshot)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [slug, userId, title, modelId, serialized]
+    );
+    res.json({ slug, url: `/share/${slug}` });
+  });
+  app2.post("/api/account/delete", requireAuth, async (req, res) => {
+    const userId = req.user.claims.sub;
+    const ip = req.ip ?? "?";
+    const ua = req.get("user-agent") ?? "?";
+    const expectedHost = req.get("host");
+    const origin = req.get("origin");
+    const referer = req.get("referer");
+    let originOk = false;
+    try {
+      if (origin) originOk = new URL(origin).host === expectedHost;
+      if (!originOk && referer) {
+        originOk = new URL(referer).host === expectedHost;
+      }
+    } catch {
+      originOk = false;
+    }
+    if (!originOk) {
+      console.warn(
+        `[account-delete] rejected (bad origin) user=${userId} ip=${ip} origin=${origin ?? "-"} referer=${referer ?? "-"}`
+      );
+      return res.status(403).json({ error: { message: "Request origin not allowed" } });
+    }
+    const confirm = req.body?.confirm;
+    const REQUIRED_PHRASE = "delete my account";
+    if (typeof confirm !== "string" || confirm.trim().toLowerCase() !== REQUIRED_PHRASE) {
+      console.warn(
+        `[account-delete] rejected (bad confirmation) user=${userId} ip=${ip}`
+      );
+      return res.status(400).json({ error: { message: "Confirmation phrase did not match" } });
+    }
+    if (!checkAccountDeleteRate(userId)) {
+      console.warn(
+        `[account-delete] rejected (rate limited) user=${userId} ip=${ip}`
+      );
+      return res.status(429).json({ error: { message: "Too many delete attempts. Try again later." } });
+    }
+    console.log(
+      `[account-delete] proceeding user=${userId} ip=${ip} ua=${JSON.stringify(ua)}`
+    );
+    try {
+      await query(`DELETE FROM users WHERE id = $1`, [userId]);
+    } catch (err) {
+      console.error("Account deletion failed:", err);
+      return res.status(500).json({ error: { message: "Failed to delete account" } });
+    }
+    req.logout(() => {
+      req.session?.destroy(() => {
+        res.clearCookie("connect.sid");
+        res.status(204).end();
+      });
+    });
+  });
+  app2.get("/api/share/:slug", async (req, res) => {
+    const slug = req.params.slug;
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(slug)) {
+      return res.status(404).json({ error: { message: "Not found" } });
+    }
+    const result = await query(
+      `SELECT title, model_id, snapshot, created_at
+         FROM shared_chats WHERE slug = $1`,
+      [slug]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return res.status(404).json({ error: { message: "Not found" } });
+    }
+    res.json({
+      slug,
+      title: row.title,
+      modelId: row.model_id,
+      messages: row.snapshot.messages,
+      createdAt: row.created_at
+    });
   });
 }
 
@@ -2024,7 +2483,7 @@ async function start() {
     });
   }
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Switchboard listening on http://0.0.0.0:${PORT}`);
+    console.log(`Orbitron listening on http://0.0.0.0:${PORT}`);
   });
 }
 start().catch((err) => {

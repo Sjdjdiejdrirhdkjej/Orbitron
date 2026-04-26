@@ -31,7 +31,7 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
  *   - sessions(sid varchar PK, sess jsonb, expire timestamp) with expire index
  *
  * On first boot we drop any pre-existing legacy email/password users + sessions
- * tables (Switchboard previously had its own auth) so they can be recreated to
+ * tables (Orbitron previously had its own auth) so they can be recreated to
  * match the Replit Auth shape. api_keys is dropped along with them because its
  * user_id column referenced the old UUID primary key.
  */

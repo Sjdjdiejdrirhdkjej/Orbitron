@@ -62,7 +62,7 @@ export default function ModelDetail() {
 
 const client = new OpenAI({
   baseURL: "${baseUrl}/api",
-  apiKey: process.env.SWITCHBOARD_API_KEY, // Generate at /keys
+  apiKey: process.env.ORBITRON_API_KEY, // Generate at /keys
 });
 
 const response = await client.chat.completions.create({
@@ -76,7 +76,7 @@ import os
 
 client = OpenAI(
     base_url="${baseUrl}/api",
-    api_key=os.environ["SWITCHBOARD_API_KEY"],  # Generate at /keys
+    api_key=os.environ["ORBITRON_API_KEY"],  # Generate at /keys
 )
 
 response = client.chat.completions.create(
@@ -87,7 +87,7 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)`,
     curl: `curl ${baseUrl}/api/chat \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer $SWITCHBOARD_API_KEY" \\
+  -H "Authorization: Bearer $ORBITRON_API_KEY" \\
   -d '{
     "modelId": "${model.id}",
     "messages": [{"role": "user", "content": "Hello!"}]
@@ -263,7 +263,7 @@ print(response.choices[0].message.content)`,
               </div>
               <h3 className="font-bold text-sm mb-1">No benchmark data yet</h3>
               <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
-                Switchboard hasn't published independent benchmark scores for{" "}
+                Orbitron hasn't published independent benchmark scores for{" "}
                 <span className="font-mono">{model.id}</span>. Once we run a
                 standard suite (MMLU, HumanEval, GPQA, etc.) the results will
                 show up here.
