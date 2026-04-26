@@ -59,6 +59,89 @@ export async function deductCredits(
 }
 
 /**
+ * Atomically reserve credits up-front, before a paid request runs.
+ *
+ * This is the primary defense against "free usage when depleted" exploits:
+ * we deduct the worst-case cost from the balance BEFORE the provider call,
+ * so concurrent requests can't all squeak through on the same dollar, and
+ * a user with insufficient credits is rejected with a clear error rather
+ * than being served the response and then having the deduction silently
+ * fail post-hoc. Callers MUST settle the reservation by either:
+ *   - calling `refundCredits` for any unused remainder after the request, AND
+ *   - calling `recordCreditAudit` with the actual usage cost for the audit log.
+ *
+ * Returns the number of cents actually reserved, or `null` if the user has
+ * insufficient balance (in which case the request must be rejected).
+ *
+ * NOTE: deliberately does NOT write a credit_grants audit row — reservation
+ * is an internal accounting step that gets reconciled at settlement time.
+ */
+export async function reserveCredits(
+  userId: string,
+  amountCents: number,
+): Promise<number | null> {
+  if (amountCents <= 0) return 0;
+  try {
+    const result = await query<{ credit_balance_cents: number }>(
+      `UPDATE users
+          SET credit_balance_cents = credit_balance_cents - $2
+        WHERE id = $1
+          AND credit_balance_cents >= $2
+        RETURNING credit_balance_cents`,
+      [userId, amountCents],
+    );
+    if (result.rows.length === 0) return null;
+    return amountCents;
+  } catch (err) {
+    console.error("reserveCredits failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Refund unused reservation back to the user's balance. Best-effort.
+ * Does NOT write an audit row — the reservation never produced one.
+ */
+export async function refundCredits(
+  userId: string,
+  amountCents: number,
+): Promise<void> {
+  if (amountCents <= 0) return;
+  try {
+    await query(
+      `UPDATE users
+          SET credit_balance_cents = credit_balance_cents + $2
+        WHERE id = $1`,
+      [userId, amountCents],
+    );
+  } catch (err) {
+    console.error("refundCredits failed:", err);
+  }
+}
+
+/**
+ * Write a single audit-trail entry for a settled usage charge.
+ * Call this AFTER reserveCredits + the actual request, with the real cost.
+ * Balance is unaffected — the deduction already happened at reservation.
+ */
+export async function recordCreditAudit(
+  userId: string,
+  amountCents: number,
+  description: string,
+): Promise<void> {
+  if (amountCents <= 0) return;
+  try {
+    await query(
+      `INSERT INTO credit_grants (user_id, amount_cents, reason, description)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, -amountCents, "usage", description],
+    );
+  } catch (err) {
+    console.error("recordCreditAudit failed:", err);
+  }
+}
+
+/**
  * Get the user's current credit balance in cents.
  * Returns 0 if user not found.
  */

@@ -11,6 +11,17 @@ Every user has a real `credit_balance_cents` on the `users` row plus a `credit_g
 
 `GET /api/credits` (auth required) returns `{ balanceCents, balanceUsd, welcomeGrantedAt, legacyGrantedAt, grants: [...] }`. The Credits page renders the live balance and the grant history; paid top-ups, invoices, and usage deductions are still unwired and shown as explicit empty states.
 
+### Spend enforcement
+
+Both `/api/chat` and `/api/images` use a **reserve-then-settle** flow in `server/credits.ts` so a depleted user can never get a free response, even under parallel requests:
+
+1. **Validate**: model must be in the catalog (`MODEL_CATALOG` in `src/data/models.ts`); `maxTokens` is capped at `MAX_OUTPUT_TOKENS_HARD_CAP=8192`; chat rejects `>200` messages; images cap `n∈[1,4]` and prompt length `≤4000` chars.
+2. **Reserve**: `reserveCredits(userId, worstCaseCents)` atomically `UPDATE users SET credit_balance_cents = balance - $worst WHERE balance >= $worst` — it returns `null` (→ HTTP `402 insufficient_credits`) if the row didn't budge. Worst-case for chat = `inputTokens × inputPrice + maxTokens × outputPrice`, multiplied by `MAX_TOOL_ITERATIONS+1` when tools are enabled (so the agentic tool loop is fully reserved up front, not free for rounds 2-4). Worst-case for images = `n × per-image price`.
+3. **Stream / call provider**: chat runners (`server/chat.ts`) report per-round token usage via `onRoundComplete(in,out)` so tool-loop rounds are accounted for individually.
+4. **Settle**: `actualCostCents = min(reservation, real cost)`. The unused remainder is `refundCredits`'d back, and a single audit row is written via `recordCreditAudit(userId, actualCostCents, description)`. On provider failure the full reservation is refunded — users are never billed for an upstream error.
+
+Image prices are non-zero per model in `IMAGE_PRICE_USD` (`gpt-image-1=$0.04`, `gemini-2.5-flash-image=$0.039`); a `$0` entry would re-open the free-generation exploit.
+
 ## Stack
 
 - **Frontend**: React 18 + TypeScript + Vite + Tailwind + React Router v6 + lucide-react
@@ -140,7 +151,7 @@ Every catalog entry maps 1:1 to a real, currently-supported model on the AI Inte
 | `gpt-5.5` | `gpt-5.5` | OpenAI |
 | `gpt-5.4` | `gpt-5.4` | OpenAI |
 | `gpt-5.2` | `gpt-5.2` | OpenAI |
-| `gpt-5.2-codex` | `gpt-5.2-codex` | OpenAI |
+| `gpt-5.3-codex` | `gpt-5.3-codex` | OpenAI |
 | `gpt-5.1` | `gpt-5.1` | OpenAI |
 | `gpt-5` | `gpt-5` | OpenAI |
 | `gpt-5-mini` | `gpt-5-mini` | OpenAI |

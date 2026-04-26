@@ -48,8 +48,8 @@ var models = [
     description: "Smartest and most trustworthy for difficult questions. Strong in programming and complex domains."
   },
   {
-    id: "gpt-5.2-codex",
-    name: "GPT-5.2 Codex",
+    id: "gpt-5.3-codex",
+    name: "GPT-5.3 Codex",
     provider: "OpenAI",
     contextWindow: 4e5,
     inputPrice: 1.5,
@@ -1295,7 +1295,7 @@ var openAIMap = {
   "gpt-5.5": "gpt-5.5",
   "gpt-5.4": "gpt-5.4",
   "gpt-5.2": "gpt-5.2",
-  "gpt-5.2-codex": "gpt-5.2-codex",
+  "gpt-5.3-codex": "gpt-5.3-codex",
   "gpt-5.1": "gpt-5.1",
   "gpt-5": "gpt-5",
   "gpt-5-mini": "gpt-5-mini",

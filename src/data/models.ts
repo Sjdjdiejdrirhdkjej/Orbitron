@@ -54,8 +54,8 @@ export const models: Model[] = [
     description: "Smartest and most trustworthy for difficult questions. Strong in programming and complex domains.",
   },
   {
-    id: "gpt-5.2-codex",
-    name: "GPT-5.2 Codex",
+    id: "gpt-5.3-codex",
+    name: "GPT-5.3 Codex",
     provider: "OpenAI",
     contextWindow: 400000,
     inputPrice: 1.50,

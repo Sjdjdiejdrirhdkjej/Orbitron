@@ -655,7 +655,7 @@ export default function Settings() {
                     <option value="">None (All models)</option>
                     <option value="gpt-5.5">GPT-5.5</option>
                     <option value="gpt-5.4">GPT-5.4</option>
-                    <option value="gpt-5.2-codex">GPT-5.2 Codex</option>
+                    <option value="gpt-5.3-codex">GPT-5.3 Codex</option>
                     <option value="claude-sonnet-4.6">Claude Sonnet 4.6</option>
                     <option value="gemini-3-pro">Gemini 3 Pro</option>
                     <option value="gemini-3-flash">Gemini 3 Flash</option>

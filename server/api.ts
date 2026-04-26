@@ -10,7 +10,12 @@ import {
   getUsageSummary,
   getMeasuredModelStats,
 } from "./usage";
-import { getCreditsState } from "./credits";
+import {
+  getCreditsState,
+  reserveCredits,
+  refundCredits,
+  recordCreditAudit,
+} from "./credits";
 import { query } from "./db";
 import { randomBytes } from "node:crypto";
 
@@ -80,6 +85,23 @@ interface ImageBody {
 
 const IMAGE_MODEL_IDS = ["gpt-image-1", "gemini-2.5-flash-image"] as const;
 type ImageModelId = (typeof IMAGE_MODEL_IDS)[number];
+
+/**
+ * Per-image USD list price for each supported image model.
+ *
+ * These prices MUST be non-zero — a $0 entry would let a depleted user
+ * generate images for free because the credit reservation would compute to
+ * zero and the post-hoc audit row would never debit anything.
+ *
+ * - gpt-image-1: $0.04 / 1024 medium-quality image (OpenAI list price).
+ * - gemini-2.5-flash-image: $0.039 / image (Gemini "Nano Banana" list price).
+ */
+const IMAGE_PRICE_USD: Record<ImageModelId, number> = {
+  "gpt-image-1": 0.04,
+  "gemini-2.5-flash-image": 0.039,
+};
+
+const IMAGE_PROMPT_MAX_LEN = 4000;
 
 // In-memory sliding-window rate limiter for the account deletion endpoint.
 // Keyed by userId. We allow up to ACCOUNT_DELETE_MAX attempts per window;
@@ -279,8 +301,16 @@ export function registerApiRoutes(app: Express): void {
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: { message: "prompt is required" } });
     }
-    if (n < 1 || n > 4) {
-      return res.status(400).json({ error: { message: "n must be between 1 and 4" } });
+    if (prompt.length > IMAGE_PROMPT_MAX_LEN) {
+      return res.status(400).json({
+        error: { message: `Prompt too long (max ${IMAGE_PROMPT_MAX_LEN} chars).` },
+      });
+    }
+    const requestedN = Number(n);
+    if (!Number.isInteger(requestedN) || requestedN < 1 || requestedN > 4) {
+      return res
+        .status(400)
+        .json({ error: { message: "n must be an integer between 1 and 4" } });
     }
     if (!IMAGE_MODEL_IDS.includes(model as ImageModelId)) {
       return res.status(400).json({
@@ -291,10 +321,31 @@ export function registerApiRoutes(app: Express): void {
     const startTime = Date.now();
     const userId = req.auth!.user.id;
     const apiKeyId = req.auth!.apiKeyId ?? null;
+    const modelId = model as ImageModelId;
+    const perImageUsd = IMAGE_PRICE_USD[modelId];
+    // Reserve worst-case cost (n × per-image price) up front. If this fails
+    // we never call the provider — that's the only thing standing between a
+    // depleted user and unlimited image generation.
+    const reservationCents = Math.max(1, Math.ceil(perImageUsd * requestedN * 100));
+    const reserved = await reserveCredits(userId, reservationCents);
+    if (reserved === null) {
+      return res.status(402).json({
+        error: {
+          message:
+            "Insufficient credits. Add more credits to continue using the API.",
+          type: "insufficient_credits",
+          requiredCents: reservationCents,
+        },
+      });
+    }
+
+    let imagesReturned = 0;
+    let success = false;
     try {
-      if (model === "gemini-2.5-flash-image") {
+      let data: Array<{ b64_json: string | null; revised_prompt: string | null }>;
+      if (modelId === "gemini-2.5-flash-image") {
         // Gemini generates one image per call; fan out for n>1.
-        const calls = Array.from({ length: n }, () =>
+        const calls = Array.from({ length: requestedN }, () =>
           (gemini.models.generateContent as (a: unknown) => Promise<unknown>)({
             model: "gemini-2.5-flash-image",
             contents: prompt,
@@ -302,7 +353,7 @@ export function registerApiRoutes(app: Express): void {
           }),
         );
         const results = await Promise.all(calls);
-        const data = results.map((r) => {
+        data = results.map((r) => {
           const parts =
             (r as { candidates?: { content?: { parts?: unknown[] } }[] })
               .candidates?.[0]?.content?.parts ?? [];
@@ -315,81 +366,59 @@ export function registerApiRoutes(app: Express): void {
             revised_prompt: null,
           };
         });
-
-        const totalMs = Date.now() - startTime;
-        const imagesReturned = data.filter((d) => d.b64_json).length;
-        // Gemini image pricing isn't published per-image the same way as gpt-image-1;
-        // record requests + latency without a synthetic cost.
-        void recordUsage({
-          userId,
-          apiKeyId,
-          kind: "image",
-          modelId: "gemini-2.5-flash-image",
-          provider: providerForModel("gemini-2.5-flash-image") || "Google",
-          inputTokens: 0,
-          outputTokens: imagesReturned,
-          costUsd: 0,
-          latencyMs: totalMs,
-          totalMs,
-          success: imagesReturned > 0,
+      } else {
+        // Default: OpenAI gpt-image-1
+        const response = await openai.images.generate({
+          model: "gpt-image-1",
+          prompt,
+          size,
+          n: requestedN,
         });
-        return res.json({
-          model: "gemini-2.5-flash-image",
-          latencyMs: totalMs,
-          data,
-        });
+        data = (response.data ?? []).map((img) => ({
+          b64_json: img.b64_json ?? null,
+          revised_prompt:
+            (img as { revised_prompt?: string }).revised_prompt ?? null,
+        }));
       }
 
-      // Default: OpenAI gpt-image-1
-      const response = await openai.images.generate({
-        model: "gpt-image-1",
-        prompt,
-        size,
-        n,
-      });
-
-      const data = (response.data ?? []).map((img) => ({
-        b64_json: img.b64_json ?? null,
-        revised_prompt: (img as { revised_prompt?: string }).revised_prompt ?? null,
-      }));
-
+      imagesReturned = data.filter((d) => d.b64_json).length;
+      success = imagesReturned > 0;
       const totalMs = Date.now() - startTime;
-      const imagesReturned = data.filter((d) => d.b64_json).length;
-      // gpt-image-1 list price is ~$0.04 per 1024-image (medium quality).
-      const perImageCost = 0.04;
-      void recordUsage({
-        userId,
-        apiKeyId,
-        kind: "image",
-        modelId: "gpt-image-1",
-        provider: providerForModel("gpt-image-1") || "OpenAI",
-        inputTokens: 0,
-        outputTokens: imagesReturned,
-        costUsd: perImageCost * imagesReturned,
-        latencyMs: totalMs,
-        totalMs,
-        success: imagesReturned > 0,
-      });
-
-      res.json({
-        model: "gpt-image-1",
-        latencyMs: totalMs,
-        data,
-      });
+      res.json({ model: modelId, latencyMs: totalMs, data });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Image generation failed";
       console.error("Image generation error:", err);
+      res.status(500).json({ error: { message } });
+    } finally {
+      // Settle the reservation: charge for images that actually came back,
+      // refund the rest. Failed requests refund the full reservation so a
+      // user is never billed for a provider error they didn't get value from.
+      const actualCostCents = Math.min(
+        reservationCents,
+        Math.ceil(perImageUsd * imagesReturned * 100),
+      );
+      const refundCents = reservationCents - actualCostCents;
+      if (refundCents > 0) await refundCredits(userId, refundCents);
+      if (actualCostCents > 0) {
+        void recordCreditAudit(
+          userId,
+          actualCostCents,
+          `${modelId} — ${imagesReturned} image${imagesReturned === 1 ? "" : "s"}`,
+        );
+      }
       void recordUsage({
         userId,
         apiKeyId,
         kind: "image",
-        modelId: model,
-        provider: providerForModel(model) || "Unknown",
+        modelId,
+        provider: providerForModel(modelId) || "Unknown",
+        inputTokens: 0,
+        outputTokens: imagesReturned,
+        costUsd: actualCostCents / 100,
         latencyMs: Date.now() - startTime,
         totalMs: Date.now() - startTime,
-        success: false,
+        success,
       });
-      res.status(500).json({ error: { message } });
     }
   });
 
