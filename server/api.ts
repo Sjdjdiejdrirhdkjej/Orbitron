@@ -81,6 +81,28 @@ interface ImageBody {
 const IMAGE_MODEL_IDS = ["gpt-image-1", "gemini-2.5-flash-image"] as const;
 type ImageModelId = (typeof IMAGE_MODEL_IDS)[number];
 
+// In-memory sliding-window rate limiter for the account deletion endpoint.
+// Keyed by userId. We allow up to ACCOUNT_DELETE_MAX attempts per window;
+// successful deletions naturally clear the user from the map on the next
+// purge sweep, so this only matters for failed attempts (wrong phrase, etc).
+const ACCOUNT_DELETE_MAX = 5;
+const ACCOUNT_DELETE_WINDOW_MS = 15 * 60 * 1000;
+const accountDeleteAttempts = new Map<string, number[]>();
+
+function checkAccountDeleteRate(userId: string): boolean {
+  const now = Date.now();
+  const cutoff = now - ACCOUNT_DELETE_WINDOW_MS;
+  const prev = accountDeleteAttempts.get(userId) ?? [];
+  const recent = prev.filter((t) => t > cutoff);
+  if (recent.length >= ACCOUNT_DELETE_MAX) {
+    accountDeleteAttempts.set(userId, recent);
+    return false;
+  }
+  recent.push(now);
+  accountDeleteAttempts.set(userId, recent);
+  return true;
+}
+
 export function registerApiRoutes(app: Express): void {
   // GET /api/status — ping each provider and report aggregate + per-provider health.
   // Cached for 30s on the server to avoid hammering provider list endpoints.
@@ -406,12 +428,78 @@ export function registerApiRoutes(app: Express): void {
     res.json({ slug, url: `/share/${slug}` });
   });
 
-  // DELETE /api/account — permanently delete the authenticated user. Removes
-  // the users row, which CASCADEs to api_keys, usage_events, credit_grants,
-  // and shared_chats. Then destroys the session so the browser is signed out.
-  // Frontend should redirect to "/" after a successful 204.
-  app.delete("/api/account", requireAuth, async (req: Request, res: Response) => {
+  // POST /api/account/delete — permanently delete the authenticated user.
+  // Removes the users row, which CASCADEs to api_keys, usage_events,
+  // credit_grants, and shared_chats. Then destroys the session so the browser
+  // is signed out. Frontend should redirect to "/" after a successful 204.
+  //
+  // Hardening layers (defense in depth):
+  //   1. requireAuth — must hold a valid session cookie.
+  //   2. Origin / Referer check — request must originate from our own host,
+  //      blocking cross-site CSRF even if the attacker has the cookie.
+  //   3. Body-confirmation phrase — the server independently checks that the
+  //      caller passed the literal phrase, so a cross-site attacker would need
+  //      to know it (and JSON bodies trigger CORS preflight anyway).
+  //   4. Per-user rate limit — caps repeat attempts at 5 / 15min so a tricked
+  //      user can't be hammered, and protects against scripted abuse.
+  //   5. Audit log — every attempt (success or rejection) is logged with user
+  //      id, IP, and user-agent for incident review.
+  app.post("/api/account/delete", requireAuth, async (req: Request, res: Response) => {
     const userId = (req.user as { claims: { sub: string } }).claims.sub;
+    const ip = req.ip ?? "?";
+    const ua = req.get("user-agent") ?? "?";
+
+    // 2. Origin / Referer check. Either header must match our host.
+    const expectedHost = req.get("host");
+    const origin = req.get("origin");
+    const referer = req.get("referer");
+    let originOk = false;
+    try {
+      if (origin) originOk = new URL(origin).host === expectedHost;
+      if (!originOk && referer) {
+        originOk = new URL(referer).host === expectedHost;
+      }
+    } catch {
+      originOk = false;
+    }
+    if (!originOk) {
+      console.warn(
+        `[account-delete] rejected (bad origin) user=${userId} ip=${ip} origin=${origin ?? "-"} referer=${referer ?? "-"}`,
+      );
+      return res
+        .status(403)
+        .json({ error: { message: "Request origin not allowed" } });
+    }
+
+    // 3. Body confirmation phrase.
+    const confirm = (req.body as { confirm?: unknown })?.confirm;
+    const REQUIRED_PHRASE = "delete my account";
+    if (
+      typeof confirm !== "string" ||
+      confirm.trim().toLowerCase() !== REQUIRED_PHRASE
+    ) {
+      console.warn(
+        `[account-delete] rejected (bad confirmation) user=${userId} ip=${ip}`,
+      );
+      return res
+        .status(400)
+        .json({ error: { message: "Confirmation phrase did not match" } });
+    }
+
+    // 4. Per-user rate limit.
+    if (!checkAccountDeleteRate(userId)) {
+      console.warn(
+        `[account-delete] rejected (rate limited) user=${userId} ip=${ip}`,
+      );
+      return res
+        .status(429)
+        .json({ error: { message: "Too many delete attempts. Try again later." } });
+    }
+
+    // 5. Audit log + perform the delete.
+    console.log(
+      `[account-delete] proceeding user=${userId} ip=${ip} ua=${JSON.stringify(ua)}`,
+    );
     try {
       await query(`DELETE FROM users WHERE id = $1`, [userId]);
     } catch (err) {

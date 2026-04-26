@@ -115,12 +115,33 @@ export default function Settings() {
 
   async function deleteAccount() {
     if (deleteConfirmText.trim().toLowerCase() !== DELETE_PHRASE) return;
+    // Final accidental-click guard — a native dialog the user has to acknowledge.
+    if (
+      !window.confirm(
+        "This will permanently delete your account, API keys, usage history, " +
+          "credits, and shared chats. There is no undo. Continue?",
+      )
+    ) {
+      return;
+    }
     setDeleting(true);
     setDeleteError(null);
     try {
-      const res = await fetch("/api/account", { method: "DELETE" });
+      const res = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ confirm: deleteConfirmText.trim() }),
+      });
       if (!res.ok && res.status !== 204) {
-        throw new Error(`HTTP ${res.status}`);
+        let msg = `HTTP ${res.status}`;
+        try {
+          const data = (await res.json()) as { error?: { message?: string } };
+          if (data.error?.message) msg = data.error.message;
+        } catch {
+          /* response wasn't JSON — keep the status code */
+        }
+        throw new Error(msg);
       }
       // Server has already destroyed the session and cleared the cookie.
       // Hard-navigate to the marketing landing so all in-memory state is reset.
