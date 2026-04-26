@@ -15,6 +15,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { models } from "../data/models";
+import { Markdown } from "../components/Markdown";
 
 type Role = "user" | "assistant";
 
@@ -132,36 +133,45 @@ function MessageBody({
   msg: Message;
   isLastStreaming: boolean;
 }) {
-  // Legacy messages without blocks — render plain content.
-  if (!msg.blocks || msg.blocks.length === 0) {
+  const renderText = (text: string, key: React.Key, showCursor: boolean) => {
+    if (msg.role === "assistant") {
+      return (
+        <div key={key}>
+          {text && <Markdown>{text}</Markdown>}
+          {showCursor && (
+            <Loader2 className="inline w-4 h-4 animate-spin text-muted-foreground" />
+          )}
+        </div>
+      );
+    }
     return (
-      <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-        {msg.content}
-        {isLastStreaming && !msg.content && (
+      <div
+        key={key}
+        className="text-sm leading-relaxed whitespace-pre-wrap break-words"
+      >
+        {text}
+        {showCursor && (
           <Loader2 className="inline w-4 h-4 animate-spin text-muted-foreground" />
         )}
       </div>
     );
+  };
+
+  // Legacy messages without blocks — render plain content.
+  if (!msg.blocks || msg.blocks.length === 0) {
+    return renderText(msg.content, "legacy", isLastStreaming && !msg.content);
   }
 
   return (
     <div className="space-y-2">
       {msg.blocks.map((block, i) => {
         if (block.type === "text") {
-          if (!block.text && !(isLastStreaming && i === msg.blocks!.length - 1)) {
+          const isLastBlock = i === msg.blocks!.length - 1;
+          const showCursor = isLastStreaming && isLastBlock && !block.text;
+          if (!block.text && !showCursor) {
             return null;
           }
-          return (
-            <div
-              key={i}
-              className="text-sm leading-relaxed whitespace-pre-wrap break-words"
-            >
-              {block.text}
-              {isLastStreaming && i === msg.blocks!.length - 1 && !block.text && (
-                <Loader2 className="inline w-4 h-4 animate-spin text-muted-foreground" />
-              )}
-            </div>
-          );
+          return renderText(block.text, i, showCursor);
         }
         return <ToolCallCard key={block.callId || i} block={block} />;
       })}
