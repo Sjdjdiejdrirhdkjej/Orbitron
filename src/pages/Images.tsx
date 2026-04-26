@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Image as ImageIcon, Loader2, Download, Sparkles, Trash2, AlertCircle } from "lucide-react";
+import { getDashboardKey, resetDashboardKey } from "../lib/dashboardKey";
 
 // Lazy-initialized browser support check (SSR-safe)
 function getBrowserSupportsWebP(): boolean {
@@ -216,16 +217,31 @@ export default function Images() {
     setError(null);
 
     try {
-      const res = await fetch("/api/images", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: trimmed,
-          size: activeModel.supportsSize ? size : undefined,
-          n: count,
-          model,
-        }),
-      });
+      // /api/images now requires a Bearer API key. Same auto-provisioning +
+      // 401-retry pattern as the Chat page so the dashboard works without the
+      // user ever seeing or managing a key.
+      const callImages = async (): Promise<Response> => {
+        const apiKey = await getDashboardKey();
+        return fetch("/api/images", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            prompt: trimmed,
+            size: activeModel.supportsSize ? size : undefined,
+            n: count,
+            model,
+          }),
+        });
+      };
+
+      let res = await callImages();
+      if (res.status === 401) {
+        resetDashboardKey();
+        res = await callImages();
+      }
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

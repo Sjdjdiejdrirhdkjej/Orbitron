@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { models as catalog } from "../src/data/models";
-import { requireAuth } from "./auth";
+import { requireApiKey } from "./auth";
 import { recordUsage, providerForModel } from "./usage";
 import { deductCredits } from "./credits";
 import {
@@ -81,6 +81,7 @@ interface ChatBody {
   temperature?: number;
   maxTokens?: number;
   tools?: { webSearch?: boolean };
+  reasoningLevel?: "low" | "medium" | "high";
 }
 
 /** Hard cap on tool-use rounds per request — guards against runaway loops. */
@@ -426,7 +427,7 @@ async function runGemini(opts: {
 // ---------------------------------------------------------------------------
 
 export function registerChatRoutes(app: Express): void {
-  app.post("/api/chat", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/chat", requireApiKey, async (req: Request, res: Response) => {
     const {
       modelId,
       messages,

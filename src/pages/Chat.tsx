@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { getDashboardKey, resetDashboardKey } from "../lib/dashboardKey";
 import {
   Settings2,
   Send,
@@ -487,18 +488,34 @@ export default function Chat() {
     };
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          modelId,
-          temperature: settings.temperature,
-          maxTokens: settings.maxTokens,
-          tools: { webSearch: settings.webSearch },
-          messages: history,
-        }),
-      });
+      // /api/chat now requires a Bearer API key. The dashboard fetches a
+      // hidden auto-provisioned key from /api/auth/dashboard-key on first use
+      // and caches it in module memory; on a 401 we drop the cache and
+      // re-provision once before bubbling the error up.
+      const callChat = async (): Promise<Response> => {
+        const apiKey = await getDashboardKey();
+        return fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            modelId,
+            temperature: settings.temperature,
+            maxTokens: settings.maxTokens,
+            tools: { webSearch: settings.webSearch },
+            messages: history,
+          }),
+        });
+      };
+
+      let res = await callChat();
+      if (res.status === 401) {
+        resetDashboardKey();
+        res = await callChat();
+      }
 
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => "");
@@ -731,6 +748,7 @@ export default function Chat() {
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
+      if (creditBalanceCents === 0) return; // Block sending with no credits
       e.preventDefault();
       void send();
     }
@@ -1120,7 +1138,8 @@ export default function Chat() {
                 ) : (
                   <button
                     onClick={() => void send()}
-                    disabled={!input.trim()}
+                    disabled={!input.trim() || creditBalanceCents === 0}
+                    title={creditBalanceCents === 0 ? "No credits remaining" : undefined}
                     className="bg-foreground text-background p-2 rounded-md hover:bg-foreground/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     aria-label="Send message"
                   >

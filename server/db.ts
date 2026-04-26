@@ -91,6 +91,15 @@ export async function ensureSchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS api_keys_user_id_idx ON api_keys(user_id);
 
+    -- Auto-provisioned dashboard keys are hidden from the user's Keys page and
+    -- cannot be revoked from the UI. The dashboard SPA fetches one on load and
+    -- uses it as a Bearer token for /api/chat and /api/images so all API
+    -- traffic — first-party or third-party — is uniformly key-authenticated.
+    ALTER TABLE api_keys
+      ADD COLUMN IF NOT EXISTS is_dashboard BOOLEAN NOT NULL DEFAULT FALSE;
+    CREATE INDEX IF NOT EXISTS api_keys_user_dashboard_idx
+      ON api_keys(user_id) WHERE is_dashboard = TRUE;
+
     -- Real usage events. Every successful chat / image request appends one row.
     -- Powers /api/usage analytics and the measured latency/throughput shown on
     -- the Models catalog. Errors are recorded with success=false so error-rate

@@ -58,6 +58,23 @@ export async function deductCredits(
   }
 }
 
+/**
+ * Get the user's current credit balance in cents.
+ * Returns 0 if user not found.
+ */
+export async function getCreditBalance(userId: string): Promise<number> {
+  try {
+    const res = await query<{ credit_balance_cents: number }>(
+      `SELECT credit_balance_cents FROM users WHERE id = $1`,
+      [userId],
+    );
+    return res.rows[0]?.credit_balance_cents ?? 0;
+  } catch (err) {
+    console.error("getCreditBalance failed:", err);
+    return 0;
+  }
+}
+
 export async function getCreditsState(userId: string): Promise<CreditsState> {
   const userRes = await query<{
     credit_balance_cents: number;

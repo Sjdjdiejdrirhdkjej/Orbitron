@@ -1,6 +1,9 @@
 import type { Express, Request, Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { chatStorage } from "./storage";
+import { deductCredits, getCreditBalance } from "../../credits";
+import { requireAuth } from "../../auth";
+import { models as catalog } from "../../../src/data/models";
 
 const anthropic = new Anthropic({
   apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
@@ -59,11 +62,29 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
+  // Helper to estimate tokens (~4 chars per token)
+  function approxTokens(text: string): number {
+    return Math.max(1, Math.ceil(text.length / 4));
+  }
+
   // Send message and get AI response (streaming)
-  app.post("/api/conversations/:id/messages", async (req: Request, res: Response) => {
+  app.post("/api/conversations/:id/messages", requireAuth, async (req: Request, res: Response) => {
     try {
       const conversationId = parseInt(req.params.id);
       const { content } = req.body;
+
+      if (!content?.trim()) {
+        return res.status(400).json({ error: "Message content required" });
+      }
+
+      // Check if user has credits (non-blocking check)
+      const balanceCents = await getCreditBalance(req.auth!.user.id);
+      if (balanceCents === 0) {
+        return res.status(402).json({ 
+          error: "Insufficient credits",
+          message: "You have no credits remaining. Please add more credits to continue."
+        });
+      }
 
       // Save user message
       await chatStorage.createMessage(conversationId, "user", content);
@@ -104,6 +125,26 @@ export function registerChatRoutes(app: Express): void {
 
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
+
+      // Deduct credits from user's balance. Best-effort; never blocks.
+      const modelId = "claude-sonnet-4.6";
+      const catalogEntry = catalog.find((m) => m.id === modelId);
+      const allContent = messages.map((m) => m.content).join("\n") + "\n" + content;
+      const inputTokens = approxTokens(allContent);
+      const outputTokens = approxTokens(fullResponse);
+      const cost = catalogEntry
+        ? (inputTokens / 1_000_000) * catalogEntry.inputPrice +
+          (outputTokens / 1_000_000) * catalogEntry.outputPrice
+        : 0;
+
+      if (cost > 0) {
+        const costCents = Math.round(cost * 100);
+        void deductCredits(
+          req.auth!.user.id,
+          costCents,
+          `${modelId} — ${inputTokens} in / ${outputTokens} out`,
+        );
+      }
     } catch (error) {
       console.error("Error sending message:", error);
       // Check if headers already sent (SSE streaming started)

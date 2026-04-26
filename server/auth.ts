@@ -89,6 +89,30 @@ async function getUserFromBearer(
   return { user: rowToUser(row), keyId: row.key_id };
 }
 
+/**
+ * Rotate (or create) the auto-provisioned "Dashboard" API key for a user and
+ * return the plaintext exactly once. Any prior dashboard key is deleted so a
+ * single user never accumulates more than one.
+ *
+ * The dashboard SPA calls /api/auth/dashboard-key on load to obtain a fresh
+ * key, then uses it as a Bearer token for /api/chat and /api/images. This way
+ * those endpoints can uniformly require an API key — there is no longer a
+ * "session-only" path that bypasses key authentication.
+ */
+async function rotateDashboardKey(userId: string): Promise<string> {
+  await query(
+    `DELETE FROM api_keys WHERE user_id = $1 AND is_dashboard = TRUE`,
+    [userId],
+  );
+  const { full, prefix, lookup } = generateApiKey();
+  await query(
+    `INSERT INTO api_keys (user_id, name, prefix, lookup_hash, is_dashboard)
+     VALUES ($1, $2, $3, $4, TRUE)`,
+    [userId, "Dashboard (auto)", prefix, lookup],
+  );
+  return full;
+}
+
 async function getSessionUser(req: Request): Promise<AuthUser | null> {
   if (!req.isAuthenticated || !req.isAuthenticated()) return null;
   const claims = (req.user as any)?.claims;
@@ -147,6 +171,57 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 /**
+ * Express middleware: require a valid dashboard-issued API key.
+ *
+ * Used for the public-facing model-routing endpoints (/api/chat, /api/images).
+ * Session cookies are NOT accepted here — programmatic API access must always
+ * present a key generated at /keys (or the auto-provisioned dashboard key the
+ * SPA fetches via /api/auth/dashboard-key). Returns 401 with an explicit error
+ * type so SDK consumers can distinguish "missing key" from "invalid key".
+ */
+export async function requireApiKey(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+    return res.status(401).json({
+      error: {
+        message:
+          "Missing API key. Pass 'Authorization: Bearer <api key>'. Generate a key at /keys.",
+        type: "missing_api_key",
+      },
+    });
+  }
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return res.status(401).json({
+      error: { message: "Empty API key.", type: "invalid_api_key" },
+    });
+  }
+  if (!token.startsWith(KEY_PREFIX)) {
+    return res.status(401).json({
+      error: {
+        message: `Invalid API key format. Switchboard keys start with '${KEY_PREFIX}'.`,
+        type: "invalid_api_key",
+      },
+    });
+  }
+  const result = await getUserFromBearer(token);
+  if (!result) {
+    return res.status(401).json({
+      error: {
+        message: "Invalid or revoked API key.",
+        type: "invalid_api_key",
+      },
+    });
+  }
+  req.auth = { user: result.user, via: "api_key", apiKeyId: result.keyId };
+  next();
+}
+
+/**
  * Express middleware: require a Replit Auth session (used for /api/keys).
  * Wraps Replit Auth's `isAuthenticated` (which handles token refresh) and then
  * loads the database user record into req.auth.
@@ -166,13 +241,38 @@ export function requireSession(req: Request, res: Response, next: NextFunction) 
 }
 
 export function registerKeyRoutes(app: Express): void {
-  // GET /api/keys — list current user's keys (no secret values)
+  // POST /api/auth/dashboard-key — issue a fresh auto-provisioned key for the
+  // currently signed-in user. Required by the dashboard SPA so its Chat and
+  // Images pages can call /api/chat and /api/images, both of which now require
+  // a Bearer API key (no more session-only fallback). Each call rotates the
+  // user's previous dashboard key, so the plaintext only ever lives in the
+  // current browser tab's memory.
+  app.post(
+    "/api/auth/dashboard-key",
+    requireSession,
+    async (req: Request, res: Response) => {
+      const userId = req.auth!.user.id;
+      try {
+        const key = await rotateDashboardKey(userId);
+        res.json({ key });
+      } catch (err) {
+        console.error("Failed to rotate dashboard key:", err);
+        res
+          .status(500)
+          .json({ error: { message: "Failed to provision dashboard key" } });
+      }
+    },
+  );
+
+  // GET /api/keys — list current user's keys (no secret values).
+  // Excludes auto-provisioned dashboard keys (is_dashboard = TRUE) — those are
+  // an internal implementation detail of the SPA and aren't user-managed.
   app.get("/api/keys", requireSession, async (req: Request, res: Response) => {
     const userId = req.auth!.user.id;
     const result = await query<ApiKeyRow>(
       `SELECT id, user_id, name, prefix, monthly_cap_cents, created_at, last_used_at, revoked_at
          FROM api_keys
-        WHERE user_id = $1
+        WHERE user_id = $1 AND is_dashboard = FALSE
         ORDER BY created_at DESC`,
       [userId],
     );
@@ -238,7 +338,10 @@ export function registerKeyRoutes(app: Express): void {
     const result = await query<{ id: string }>(
       `UPDATE api_keys
           SET revoked_at = NOW()
-        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+        WHERE id = $1
+          AND user_id = $2
+          AND revoked_at IS NULL
+          AND is_dashboard = FALSE
         RETURNING id`,
       [id, userId],
     );
