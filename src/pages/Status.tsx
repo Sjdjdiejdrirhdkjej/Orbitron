@@ -67,11 +67,11 @@ export default function Status() {
   const aggregate = data ? STATUS_META[data.status] : STATUS_META.operational;
 
   return (
-    <div className="container mx-auto px-4 py-16 max-w-3xl animate-fade-in">
-      <div className="flex items-start justify-between mb-10 gap-4 flex-wrap">
+    <div className="container mx-auto px-4 py-10 sm:py-16 max-w-3xl animate-fade-in">
+      <div className="flex items-start justify-between mb-6 sm:mb-10 gap-4 flex-wrap">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight mb-2">System Status</h1>
-          <p className="text-sm text-muted-foreground font-mono">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-2">System Status</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground font-mono">
             Live health of every upstream provider Switchboard routes through.
           </p>
         </div>
@@ -88,7 +88,7 @@ export default function Status() {
       {/* Aggregate banner */}
       {data && (
         <div
-          className={`rounded-xl border p-5 mb-8 flex items-center gap-4 ${
+          className={`rounded-xl border p-4 sm:p-5 mb-6 sm:mb-8 flex items-center gap-3 sm:gap-4 ${
             data.status === "operational"
               ? "border-green-500/30 bg-green-500/5"
               : data.status === "degraded"
@@ -136,7 +136,7 @@ export default function Status() {
             return (
               <div
                 key={p.name}
-                className="rounded-lg border border-border bg-card px-5 py-4 flex items-center gap-4"
+                className="rounded-lg border border-border bg-card px-4 sm:px-5 py-3 sm:py-4 flex items-center gap-3 sm:gap-4"
               >
                 <div className={`w-2.5 h-2.5 rounded-full ${meta.dotClass} shrink-0`} />
                 <div className="min-w-0 flex-1">

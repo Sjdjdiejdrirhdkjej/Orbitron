@@ -5,6 +5,7 @@ import { GoogleGenAI } from "@google/genai";
 import { models as catalog } from "../src/data/models";
 import { requireAuth } from "./auth";
 import { recordUsage, providerForModel } from "./usage";
+import { deductCredits } from "./credits";
 import {
   WEB_SEARCH_TOOL_NAME,
   WEB_SEARCH_OPENAI_TOOL,
@@ -537,6 +538,16 @@ export function registerChatRoutes(app: Express): void {
         totalMs: totalTime,
         success: true,
       });
+
+      // Deduct credits from the user's balance. Best-effort; never blocks.
+      if (cost > 0) {
+        const costCents = Math.round(cost * 100);
+        void deductCredits(
+          req.auth!.user.id,
+          costCents,
+          `${modelId} — ${inputTokens} in / ${outputTokens} out`,
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Chat request failed";
       console.error("Chat error:", err);

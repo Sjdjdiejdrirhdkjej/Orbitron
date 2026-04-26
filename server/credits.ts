@@ -15,6 +15,49 @@ export interface CreditsState {
   grants: CreditGrantRow[];
 }
 
+/**
+ * Deduct credits from a user's balance. Best-effort — never throws into the request path.
+ * Also inserts a usage deduction record into credit_grants for the audit trail.
+ * Returns the new balance, or null if deduction failed or user had insufficient credits.
+ */
+export async function deductCredits(
+  userId: string,
+  amountCents: number,
+  description?: string,
+): Promise<{ newBalanceCents: number } | null> {
+  if (amountCents <= 0) return null;
+
+  try {
+    const result = await query<{ credit_balance_cents: number }>(
+      `UPDATE users
+          SET credit_balance_cents = GREATEST(credit_balance_cents - $2, 0)
+        WHERE id = $1
+          AND credit_balance_cents >= $2
+        RETURNING credit_balance_cents`,
+      [userId, amountCents],
+    );
+
+    if (result.rows.length === 0) {
+      // User doesn't have enough credits
+      return null;
+    }
+
+    const newBalance = result.rows[0].credit_balance_cents;
+
+    // Record the deduction in the audit trail (best-effort)
+    await query(
+      `INSERT INTO credit_grants (user_id, amount_cents, reason, description)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, -amountCents, "usage", description ?? "AI chat deduction"],
+    ).catch((err) => console.error("Failed to record credit deduction audit:", err));
+
+    return { newBalanceCents: newBalance };
+  } catch (err) {
+    console.error("deductCredits failed:", err);
+    return null;
+  }
+}
+
 export async function getCreditsState(userId: string): Promise<CreditsState> {
   const userRes = await query<{
     credit_balance_cents: number;

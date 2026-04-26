@@ -131,7 +131,7 @@ export function MarketingLayout() {
               <li><Link to="#" className="hover:text-foreground">Privacy Policy</Link></li>
               <li><Link to="#" className="hover:text-foreground">Terms of Service</Link></li>
               <li><Link to="/status" className="hover:text-foreground">Status</Link></li>
-              <li><Link to="#" className="hover:text-foreground hidden sm:block">Security</Link></li>
+              <li className="hidden sm:block"><Link to="#" className="hover:text-foreground">Security</Link></li>
             </ul>
           </div>
         </div>

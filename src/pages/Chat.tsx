@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Settings2,
   Send,
@@ -15,6 +15,8 @@ import {
   RotateCcw,
   Share2,
   Check,
+  Wallet,
+  PlusCircle,
 } from "lucide-react";
 import { models } from "../data/models";
 import { Markdown } from "../components/Markdown";
@@ -297,10 +299,27 @@ export default function Chat() {
   const [streaming, setStreaming] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [paramsOpen, setParamsOpen] = useState(false);
+  const [creditBalanceCents, setCreditBalanceCents] = useState<number | null>(null);
+  const [creditWarningDismissed, setCreditWarningDismissed] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Fetch credit balance on mount (best-effort)
+  useEffect(() => {
+    fetch("/api/credits", { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.balanceCents !== undefined) {
+          setCreditBalanceCents(data.balanceCents);
+        }
+      })
+      .catch(() => { /* ignore */ });
+  }, []);
+
+  // Show warning when credits are low (below $1) or zero
+  const showCreditWarning = creditBalanceCents !== null && creditBalanceCents < 100 && !creditWarningDismissed;
 
   // Apply ?model= from URL (e.g. coming from the Models catalog) on mount.
   useEffect(() => {
@@ -907,6 +926,43 @@ export default function Chat() {
 
       {/* Main column */}
       <div className="flex-1 flex flex-col bg-muted/10 relative min-w-0">
+        {/* Credit warning banner */}
+        {showCreditWarning && (
+          <div className="bg-yellow-500/10 border-b border-yellow-500/30 px-3 sm:px-4 py-2 sm:py-3">
+            <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                {creditBalanceCents === 0 ? (
+                  <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0" />
+                ) : (
+                  <Wallet className="w-4 h-4 text-yellow-500 shrink-0" />
+                )}
+                <span className="text-xs sm:text-sm font-medium text-yellow-200 truncate">
+                  {creditBalanceCents === 0
+                    ? "You have no credits remaining. Add more to continue chatting."
+                    : `Low credits (${(creditBalanceCents / 100).toFixed(2)} remaining). Consider adding more.`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Link
+                  to="/credits"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-yellow-200 hover:text-yellow-100 transition-colors"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Add Credits</span>
+                  <span className="sm:hidden">Add</span>
+                </Link>
+                <button
+                  onClick={() => setCreditWarningDismissed(true)}
+                  className="p-1 rounded hover:bg-yellow-500/20 transition-colors text-yellow-200/60 hover:text-yellow-200"
+                  aria-label="Dismiss credit warning"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <header className="h-14 border-b border-border flex items-center justify-between px-3 sm:px-4 bg-background z-10 gap-2">
           <button
             onClick={() => setHistoryOpen(true)}
