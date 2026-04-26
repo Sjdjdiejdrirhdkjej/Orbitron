@@ -4,7 +4,6 @@ import {
   Settings2,
   Send,
   Plus,
-  MessageSquare,
   Trash2,
   Menu,
   X,
@@ -860,73 +859,67 @@ export default function Chat() {
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 pb-48 sm:pb-40">
           {(!active || active.messages.length === 0) && (
-            <div className="max-w-3xl mx-auto text-center pt-8 sm:pt-12">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-muted mb-4">
-                <MessageSquare className="w-5 h-5 text-muted-foreground" />
-              </div>
-              <h2 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight mb-2">
+            <div className="max-w-3xl mx-auto text-center pt-12 sm:pt-20">
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
                 Chat with {activeModel.name}
               </h2>
-              <p className="text-sm text-muted-foreground font-mono max-w-md mx-auto">
-                Ask anything. Stream live responses, switch models mid-conversation, watch the cost in real time.
-              </p>
             </div>
           )}
 
-          {active?.messages.map((msg) => (
-            <div key={msg.id} className="max-w-3xl mx-auto flex gap-3 sm:gap-4 mb-6 sm:mb-8 animate-fade-in">
+          {active?.messages.map((msg) => {
+            const isLastMsg =
+              msg.id === active?.messages[active.messages.length - 1]?.id;
+            const isStreamingThis =
+              streaming && msg.role === "assistant" && isLastMsg;
+            return (
               <div
-                className={`w-6 h-6 sm:w-8 sm:h-8 rounded grid place-items-center font-bold text-xs shrink-0 mt-0.5 sm:mt-1 ${
-                  msg.role === "user"
-                    ? "bg-primary/20 text-primary"
-                    : msg.error
-                    ? "bg-destructive/20 text-destructive"
-                    : "bg-foreground text-background"
-                }`}
+                key={msg.id}
+                className="group max-w-3xl mx-auto flex gap-3 sm:gap-4 mb-6 sm:mb-8 animate-fade-in"
               >
-                {msg.role === "user" ? "U" : (msg.modelId ?? "")[0]?.toUpperCase() || "A"}
-              </div>
-              <div className="flex-1 space-y-2 min-w-0">
-                <div className="flex items-center flex-wrap gap-2">
+                <div
+                  className={`w-6 h-6 sm:w-8 sm:h-8 rounded grid place-items-center font-bold text-xs shrink-0 mt-0.5 sm:mt-1 ${
+                    msg.role === "user"
+                      ? "bg-primary/20 text-primary"
+                      : msg.error
+                      ? "bg-destructive/20 text-destructive"
+                      : "bg-foreground text-background"
+                  }`}
+                >
+                  {msg.role === "user" ? "U" : (msg.modelId ?? "")[0]?.toUpperCase() || "A"}
+                </div>
+                <div className="flex-1 space-y-2 min-w-0">
                   <div className="font-bold text-sm">
                     {msg.role === "user"
                       ? "You"
                       : models.find((m) => m.id === msg.modelId)?.name ?? "Assistant"}
                   </div>
-                  {msg.latencyMs !== undefined && (
-                    <span className="text-xs font-mono text-muted-foreground border border-border px-1.5 rounded bg-muted/30">
-                      {msg.latencyMs}ms
-                    </span>
-                  )}
-                  {msg.cost !== undefined && msg.cost > 0 && (
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {formatCost(msg.cost)}
-                    </span>
-                  )}
-                  {msg.role === "assistant" && !streaming && (
-                    <button
-                      type="button"
-                      onClick={() => void regenerate(msg.id)}
-                      title="Regenerate response"
-                      aria-label="Regenerate response"
-                      className="ml-auto inline-flex items-center gap-1 text-xs font-mono text-muted-foreground hover:text-foreground border border-border bg-muted/30 hover:bg-muted px-1.5 py-0.5 rounded transition-colors"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span className="hidden sm:inline">Regenerate</span>
-                    </button>
+                  <MessageBody msg={msg} isLastStreaming={isStreamingThis} />
+                  {msg.role === "assistant" && !isStreamingThis && (
+                    <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      {!streaming && (
+                        <button
+                          type="button"
+                          onClick={() => void regenerate(msg.id)}
+                          title="Regenerate response"
+                          aria-label="Regenerate response"
+                          className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Regenerate</span>
+                        </button>
+                      )}
+                      {msg.latencyMs !== undefined && (
+                        <span>{msg.latencyMs}ms</span>
+                      )}
+                      {msg.cost !== undefined && msg.cost > 0 && (
+                        <span>{formatCost(msg.cost)}</span>
+                      )}
+                    </div>
                   )}
                 </div>
-                <MessageBody
-                  msg={msg}
-                  isLastStreaming={
-                    streaming &&
-                    msg.role === "assistant" &&
-                    msg.id === active?.messages[active.messages.length - 1]?.id
-                  }
-                />
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Composer */}
@@ -952,21 +945,17 @@ export default function Chat() {
                   aria-pressed={settings.webSearch}
                   title={
                     settings.webSearch
-                      ? "Web search enabled — the model can fetch live results"
-                      : "Enable web search so the model can fetch live results"
+                      ? "Web search on"
+                      : "Enable web search"
                   }
-                  className={`flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded-md border transition-colors ${
+                  className={`p-2 rounded-md transition-colors ${
                     settings.webSearch
-                      ? "border-primary/50 bg-primary/10 text-primary"
-                      : "border-border bg-transparent text-muted-foreground hover:bg-muted"
+                      ? "bg-primary/10 text-primary hover:bg-primary/15"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
-                  <Globe className="w-3.5 h-3.5" />
-                  <span className="hidden xs:inline">Web search</span>
+                  <Globe className="w-4 h-4" />
                 </button>
-                <div className="text-xs font-mono text-muted-foreground px-1 hidden lg:block">
-                  Enter ↵ to send · Shift + Enter for newline
-                </div>
               </div>
               <div className="ml-auto flex items-center gap-2 pointer-events-auto">
                 {streaming ? (
@@ -989,9 +978,6 @@ export default function Chat() {
                 )}
               </div>
             </div>
-          </div>
-          <div className="text-center mt-2 text-xs font-mono text-muted-foreground">
-            Switchboard can make mistakes. Check important info.
           </div>
         </div>
       </div>
