@@ -148,6 +148,21 @@ export async function ensureSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS usage_alert_threshold_cents INTEGER NOT NULL DEFAULT 5000;
+
+    -- Public read-only conversation snapshots. The slug is the public URL
+    -- segment (/share/:slug). The snapshot column stores the title + ordered
+    -- messages exactly as they were at publish time so future edits don't
+    -- mutate the share. Owner can revoke (we DELETE the row).
+    CREATE TABLE IF NOT EXISTS shared_chats (
+      slug TEXT PRIMARY KEY,
+      user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      model_id TEXT,
+      snapshot JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS shared_chats_user_idx
+      ON shared_chats(user_id, created_at DESC);
   `);
 
   // One-time legacy bonus: $100 to every user that existed before the credits

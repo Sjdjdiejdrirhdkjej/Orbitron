@@ -11,6 +11,8 @@ import {
   getMeasuredModelStats,
 } from "./usage";
 import { getCreditsState } from "./credits";
+import { query } from "./db";
+import { randomBytes } from "node:crypto";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -363,5 +365,74 @@ export function registerApiRoutes(app: Express): void {
       });
       res.status(500).json({ error: { message } });
     }
+  });
+
+  // POST /api/share — publish a read-only snapshot of a conversation. Returns
+  // a slug that maps to /share/:slug. The caller passes the full message list
+  // so we don't need to know about their localStorage shape on the server.
+  app.post("/api/share", requireAuth, async (req: Request, res: Response) => {
+    const userId = (req.user as { claims: { sub: string } }).claims.sub;
+    const body = req.body as {
+      title?: unknown;
+      modelId?: unknown;
+      messages?: unknown;
+    };
+    const title =
+      typeof body.title === "string" && body.title.trim()
+        ? body.title.trim().slice(0, 200)
+        : "Untitled chat";
+    const modelId =
+      typeof body.modelId === "string" ? body.modelId.slice(0, 100) : null;
+    if (!Array.isArray(body.messages) || body.messages.length === 0) {
+      return res
+        .status(400)
+        .json({ error: { message: "messages must be a non-empty array" } });
+    }
+    // Hard cap snapshot size to keep one row from blowing up the DB.
+    const snapshot = { title, modelId, messages: body.messages };
+    const serialized = JSON.stringify(snapshot);
+    if (serialized.length > 1_000_000) {
+      return res
+        .status(413)
+        .json({ error: { message: "Conversation is too large to share" } });
+    }
+    // 12-byte url-safe slug — ~96 bits of entropy, no collisions in practice.
+    const slug = randomBytes(9).toString("base64url");
+    await query(
+      `INSERT INTO shared_chats (slug, user_id, title, model_id, snapshot)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [slug, userId, title, modelId, serialized],
+    );
+    res.json({ slug, url: `/share/${slug}` });
+  });
+
+  // GET /api/share/:slug — public, no auth. Returns the snapshot and metadata
+  // for the public viewer page.
+  app.get("/api/share/:slug", async (req: Request, res: Response) => {
+    const slug = req.params.slug;
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(slug)) {
+      return res.status(404).json({ error: { message: "Not found" } });
+    }
+    const result = await query<{
+      title: string;
+      model_id: string | null;
+      snapshot: { title: string; modelId: string | null; messages: unknown[] };
+      created_at: Date;
+    }>(
+      `SELECT title, model_id, snapshot, created_at
+         FROM shared_chats WHERE slug = $1`,
+      [slug],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return res.status(404).json({ error: { message: "Not found" } });
+    }
+    res.json({
+      slug,
+      title: row.title,
+      modelId: row.model_id,
+      messages: row.snapshot.messages,
+      createdAt: row.created_at,
+    });
   });
 }

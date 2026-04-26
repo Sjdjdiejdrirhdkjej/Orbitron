@@ -13,6 +13,8 @@ import {
   ExternalLink,
   AlertTriangle,
   RotateCcw,
+  Share2,
+  Check,
 } from "lucide-react";
 import { models } from "../data/models";
 import { Markdown } from "../components/Markdown";
@@ -370,6 +372,59 @@ export default function Chat() {
     }
   }
 
+  // Per-conversation share status. Keys are conv ids; value is "sharing" while
+  // the request is in flight, "shared" for ~2s after the link is copied,
+  // "error" if the publish failed. Undefined = idle (default Share2 icon).
+  const [shareState, setShareState] = useState<
+    Record<string, "sharing" | "shared" | "error" | undefined>
+  >({});
+
+  async function shareChat(id: string) {
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv || conv.messages.length === 0) return;
+    setShareState((s) => ({ ...s, [id]: "sharing" }));
+    try {
+      const res = await fetch("/api/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: conv.title,
+          modelId: conv.modelId,
+          messages: conv.messages,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { slug: string; url: string };
+      const fullUrl = `${window.location.origin}${data.url}`;
+      try {
+        await navigator.clipboard.writeText(fullUrl);
+      } catch {
+        // Clipboard may be blocked (e.g. in iframes without permission); show
+        // the link in a prompt as a fallback so the user can copy manually.
+        window.prompt("Copy this link to share:", fullUrl);
+      }
+      setShareState((s) => ({ ...s, [id]: "shared" }));
+      window.setTimeout(() => {
+        setShareState((s) => {
+          if (s[id] !== "shared") return s;
+          const next = { ...s };
+          delete next[id];
+          return next;
+        });
+      }, 2000);
+    } catch (err) {
+      console.error("Share failed:", err);
+      setShareState((s) => ({ ...s, [id]: "error" }));
+      window.setTimeout(() => {
+        setShareState((s) => {
+          const next = { ...s };
+          delete next[id];
+          return next;
+        });
+      }, 2000);
+    }
+  }
+
   function selectModel(modelId: string) {
     setSettings((s) => ({ ...s, modelId }));
     if (active) {
@@ -714,6 +769,36 @@ export default function Chat() {
                     className="flex-1 text-left px-3 py-2 text-sm truncate min-w-0"
                   >
                     {c.title || "Untitled"}
+                  </button>
+                  <button
+                    onClick={() => void shareChat(c.id)}
+                    disabled={
+                      shareState[c.id] === "sharing" ||
+                      c.messages.length === 0
+                    }
+                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-2 hover:text-foreground transition-opacity disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label={
+                      shareState[c.id] === "shared"
+                        ? "Share link copied"
+                        : "Share chat"
+                    }
+                    title={
+                      shareState[c.id] === "shared"
+                        ? "Link copied!"
+                        : shareState[c.id] === "error"
+                        ? "Share failed"
+                        : c.messages.length === 0
+                        ? "Send a message first"
+                        : "Copy public share link"
+                    }
+                  >
+                    {shareState[c.id] === "sharing" ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : shareState[c.id] === "shared" ? (
+                      <Check className="w-3.5 h-3.5 text-primary" />
+                    ) : (
+                      <Share2 className="w-3.5 h-3.5" />
+                    )}
                   </button>
                   <button
                     onClick={() => deleteChat(c.id)}
