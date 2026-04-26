@@ -12,6 +12,18 @@ var providers = ["OpenAI", "Anthropic", "Google"];
 var models = [
   // ---------- OpenAI ----------
   {
+    id: "gpt-5.5",
+    name: "GPT-5.5",
+    provider: "OpenAI",
+    contextWindow: 4e5,
+    inputPrice: 1.5,
+    outputPrice: 12,
+    throughput: 130,
+    latency: 280,
+    modalities: ["text", "vision", "audio", "tools"],
+    description: "Latest GPT-5 release. Better at coding, using computers, and deeper research capabilities."
+  },
+  {
     id: "gpt-5.4",
     name: "GPT-5.4",
     provider: "OpenAI",
@@ -21,7 +33,7 @@ var models = [
     throughput: 110,
     latency: 300,
     modalities: ["text", "vision", "audio", "tools"],
-    description: "OpenAI's latest flagship. The most capable general-purpose model \u2014 best for nearly every non-coding task."
+    description: "Affordable model for coding and professional work. Fast latency, max 128K output tokens."
   },
   {
     id: "gpt-5.2",
@@ -33,7 +45,19 @@ var models = [
     throughput: 100,
     latency: 320,
     modalities: ["text", "vision", "audio", "tools"],
-    description: "Strong general-purpose model in the GPT-5 generation. Prefer GPT-5.4 unless pinned."
+    description: "Smartest and most trustworthy for difficult questions. Strong in programming and complex domains."
+  },
+  {
+    id: "gpt-5.2-codex",
+    name: "GPT-5.2 Codex",
+    provider: "OpenAI",
+    contextWindow: 4e5,
+    inputPrice: 1.5,
+    outputPrice: 12,
+    throughput: 95,
+    latency: 350,
+    modalities: ["text", "vision", "audio", "tools"],
+    description: "Default for code generation, review, and repo-scale reasoning. Integrated coding specialization."
   },
   {
     id: "gpt-5.1",
@@ -45,7 +69,7 @@ var models = [
     throughput: 95,
     latency: 340,
     modalities: ["text", "vision", "audio", "tools"],
-    description: "OpenAI's newest flagship. Sharper reasoning, better tool use, and lower latency than GPT-5."
+    description: "Focused on stability, efficiency, and developer feedback. Solid all-around performer."
   },
   {
     id: "gpt-5",
@@ -82,6 +106,42 @@ var models = [
     latency: 110,
     modalities: ["text", "tools"],
     description: "Lowest-latency tier. Sub-200ms time-to-first-token for routing, classification, and edge use cases."
+  },
+  {
+    id: "gpt-4.1",
+    name: "GPT-4.1",
+    provider: "OpenAI",
+    contextWindow: 256000,
+    inputPrice: 2,
+    outputPrice: 8,
+    throughput: 80,
+    latency: 400,
+    modalities: ["text", "vision", "tools"],
+    description: "Popular among developers, with fine-tuning support. Extended training data."
+  },
+  {
+    id: "gpt-4.1-mini",
+    name: "GPT-4.1 mini",
+    provider: "OpenAI",
+    contextWindow: 256000,
+    inputPrice: 0.5,
+    outputPrice: 2,
+    throughput: 180,
+    latency: 200,
+    modalities: ["text", "vision", "tools"],
+    description: "Efficient mini variant of GPT-4.1 with fine-tuning support."
+  },
+  {
+    id: "o3-pro",
+    name: "o3-pro",
+    provider: "OpenAI",
+    contextWindow: 2e5,
+    inputPrice: 3,
+    outputPrice: 12,
+    throughput: 30,
+    latency: 1600,
+    modalities: ["text", "tools"],
+    description: "Pro version of o3. Thinks longer for more reliable responses. Best for critical tasks."
   },
   {
     id: "o4-mini",
@@ -194,16 +254,40 @@ var models = [
   },
   // ---------- Google ----------
   {
+    id: "gemini-3-pro",
+    name: "Gemini 3 Pro",
+    provider: "Google",
+    contextWindow: 1e6,
+    inputPrice: 2,
+    outputPrice: 12,
+    throughput: 140,
+    latency: 320,
+    modalities: ["text", "vision", "audio", "tools"],
+    description: "Google's most intelligent model. Advanced reasoning, Deep Think mode, and agentic capabilities."
+  },
+  {
+    id: "gemini-3-flash",
+    name: "Gemini 3 Flash",
+    provider: "Google",
+    contextWindow: 1e6,
+    inputPrice: 0.5,
+    outputPrice: 3,
+    throughput: 280,
+    latency: 120,
+    modalities: ["text", "vision", "audio", "tools"],
+    description: "Fast, affordable, Pro-grade reasoning. 3x speed of 2.5 Pro with modulated thinking levels."
+  },
+  {
     id: "gemini-2.5-pro",
     name: "Gemini 2.5 Pro",
     provider: "Google",
-    contextWindow: 2e6,
+    contextWindow: 1e6,
     inputPrice: 1.25,
     outputPrice: 10,
     throughput: 130,
     latency: 300,
     modalities: ["text", "vision", "audio", "tools"],
-    description: "Massive 2M-token context. Native multimodal with built-in extended thinking for hard problems."
+    description: "Advanced reasoning, coding, and multimodal understanding. 1M token context window."
   },
   {
     id: "gemini-2.5-flash",
@@ -216,6 +300,30 @@ var models = [
     latency: 150,
     modalities: ["text", "vision", "audio", "tools"],
     description: "1M context, fully multimodal, blazing fast. Outstanding price-to-performance for most workloads."
+  },
+  {
+    id: "gemini-2.5-flash-lite",
+    name: "Gemini 2.5 Flash Lite",
+    provider: "Google",
+    contextWindow: 1e6,
+    inputPrice: 0.15,
+    outputPrice: 0.6,
+    throughput: 300,
+    latency: 100,
+    modalities: ["text", "vision", "tools"],
+    description: "Ultra-low cost variant. Best for high-volume, cost-sensitive applications."
+  },
+  {
+    id: "gemini-2.0-flash-thinking",
+    name: "Gemini 2.0 Flash Thinking",
+    provider: "Google",
+    contextWindow: 1e6,
+    inputPrice: 0.4,
+    outputPrice: 3,
+    throughput: 200,
+    latency: 180,
+    modalities: ["text", "tools"],
+    description: "Fast reasoning model with chain-of-thought processing. Good balance of speed and intelligence."
   }
 ];
 
@@ -1184,12 +1292,17 @@ var gemini = new GoogleGenAI({
   }
 });
 var openAIMap = {
+  "gpt-5.5": "gpt-5.5",
   "gpt-5.4": "gpt-5.4",
   "gpt-5.2": "gpt-5.2",
+  "gpt-5.2-codex": "gpt-5.2-codex",
   "gpt-5.1": "gpt-5.1",
   "gpt-5": "gpt-5",
   "gpt-5-mini": "gpt-5-mini",
   "gpt-5-nano": "gpt-5-nano",
+  "gpt-4.1": "gpt-4.1",
+  "gpt-4.1-mini": "gpt-4.1-mini",
+  "o3-pro": "o3-pro",
   "o4-mini": "o4-mini",
   "o3": "o3"
 };
@@ -1203,8 +1316,12 @@ var anthropicMap = {
   "claude-opus-4.1": "claude-opus-4-1"
 };
 var geminiMap = {
+  "gemini-3-pro": "gemini-3-pro",
+  "gemini-3-flash": "gemini-3-flash",
   "gemini-2.5-pro": "gemini-2.5-pro",
-  "gemini-2.5-flash": "gemini-2.5-flash"
+  "gemini-2.5-flash": "gemini-2.5-flash",
+  "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
+  "gemini-2.0-flash-thinking": "gemini-2.0-flash-thinking"
 };
 var MAX_TOOL_ITERATIONS = 4;
 function approxTokens(text) {

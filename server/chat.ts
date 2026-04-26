@@ -35,12 +35,17 @@ const gemini = new GoogleGenAI({
 });
 
 const openAIMap: Record<string, string> = {
+  "gpt-5.5": "gpt-5.5",
   "gpt-5.4": "gpt-5.4",
   "gpt-5.2": "gpt-5.2",
+  "gpt-5.2-codex": "gpt-5.2-codex",
   "gpt-5.1": "gpt-5.1",
   "gpt-5": "gpt-5",
   "gpt-5-mini": "gpt-5-mini",
   "gpt-5-nano": "gpt-5-nano",
+  "gpt-4.1": "gpt-4.1",
+  "gpt-4.1-mini": "gpt-4.1-mini",
+  "o3-pro": "o3-pro",
   "o4-mini": "o4-mini",
   "o3": "o3",
 };
@@ -56,8 +61,12 @@ const anthropicMap: Record<string, string> = {
 };
 
 const geminiMap: Record<string, string> = {
+  "gemini-3-pro": "gemini-3-pro",
+  "gemini-3-flash": "gemini-3-flash",
   "gemini-2.5-pro": "gemini-2.5-pro",
   "gemini-2.5-flash": "gemini-2.5-flash",
+  "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
+  "gemini-2.0-flash-thinking": "gemini-2.0-flash-thinking",
 };
 
 interface ChatMessage {

@@ -137,18 +137,32 @@ Every catalog entry maps 1:1 to a real, currently-supported model on the AI Inte
 
 | Catalog id | Real model | Provider |
 |---|---|---|
+| `gpt-5.5` | `gpt-5.5` | OpenAI |
+| `gpt-5.4` | `gpt-5.4` | OpenAI |
+| `gpt-5.2` | `gpt-5.2` | OpenAI |
+| `gpt-5.2-codex` | `gpt-5.2-codex` | OpenAI |
 | `gpt-5.1` | `gpt-5.1` | OpenAI |
 | `gpt-5` | `gpt-5` | OpenAI |
 | `gpt-5-mini` | `gpt-5-mini` | OpenAI |
 | `gpt-5-nano` | `gpt-5-nano` | OpenAI |
+| `gpt-4.1` | `gpt-4.1` | OpenAI |
+| `gpt-4.1-mini` | `gpt-4.1-mini` | OpenAI |
+| `o3-pro` | `o3-pro` | OpenAI |
 | `o4-mini` | `o4-mini` | OpenAI |
 | `o3` | `o3` | OpenAI |
+| `claude-opus-4.7` | `claude-opus-4-7` | Anthropic |
+| `claude-sonnet-4.6` | `claude-sonnet-4-6` | Anthropic |
+| `claude-opus-4.6` | `claude-opus-4-6` | Anthropic |
 | `claude-opus-4.5` | `claude-opus-4-5` | Anthropic |
 | `claude-sonnet-4.5` | `claude-sonnet-4-5` | Anthropic |
 | `claude-haiku-4.5` | `claude-haiku-4-5` | Anthropic |
 | `claude-opus-4.1` | `claude-opus-4-1` | Anthropic |
+| `gemini-3-pro` | `gemini-3-pro` | Google |
+| `gemini-3-flash` | `gemini-3-flash` | Google |
 | `gemini-2.5-pro` | `gemini-2.5-pro` | Google |
 | `gemini-2.5-flash` | `gemini-2.5-flash` | Google |
+| `gemini-2.5-flash-lite` | `gemini-2.5-flash-lite` | Google |
+| `gemini-2.0-flash-thinking` | `gemini-2.0-flash-thinking` | Google |
 
 ## File Layout
 
@@ -168,7 +182,7 @@ src/
   components/
     CopyButton.tsx       Reusable clipboard button with Check confirmation
     ui/                  shadcn-style primitives
-  data/models.ts         14-model closed-source catalog
+  data/models.ts         26-model closed-source catalog
 ```
 
 ## Mobile Responsiveness

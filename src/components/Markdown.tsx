@@ -1,9 +1,56 @@
-import React from "react";
+import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Check, Copy } from "lucide-react";
 
 interface MarkdownProps {
   children: string;
+}
+
+function CodeBlock({ children }: { children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+
+  const extractText = (node: React.ReactNode): string => {
+    if (typeof node === "string") return node;
+    if (typeof node === "number") return String(node);
+    if (Array.isArray(node)) return node.map(extractText).join("");
+    if (React.isValidElement(node)) {
+      const props = node.props as { children?: React.ReactNode };
+      return extractText(props.children);
+    }
+    return "";
+  };
+
+  const handleCopy = async () => {
+    const text = extractText(children);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard not available — silently fail.
+    }
+  };
+
+  return (
+    <div className="group relative">
+      <pre className="bg-muted border border-border rounded-md p-3 pr-10 overflow-x-auto text-xs font-mono leading-relaxed">
+        {children}
+      </pre>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label={copied ? "Copied" : "Copy code"}
+        className="absolute top-2 right-2 p-1.5 rounded-md bg-background/80 border border-border text-muted-foreground hover:text-foreground hover:bg-background opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+      >
+        {copied ? (
+          <Check className="w-3.5 h-3.5 text-primary" />
+        ) : (
+          <Copy className="w-3.5 h-3.5" />
+        )}
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -93,11 +140,7 @@ export function Markdown({ children }: MarkdownProps) {
               </code>
             );
           },
-          pre: ({ children }) => (
-            <pre className="bg-muted border border-border rounded-md p-3 overflow-x-auto text-xs font-mono leading-relaxed">
-              {children}
-            </pre>
-          ),
+          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           table: ({ children }) => (
             <div className="overflow-x-auto">
               <table className="w-full text-sm border-collapse border border-border">
