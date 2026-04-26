@@ -1,5 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, MoreVertical, Copy, Check, AlertTriangle, Loader2, X } from "lucide-react";
+import {
+  Plus,
+  Copy,
+  Check,
+  AlertTriangle,
+  Loader2,
+  X,
+  ChevronDown,
+  ChevronRight,
+  BarChart3,
+} from "lucide-react";
 
 interface ApiKey {
   id: string;
@@ -9,6 +19,128 @@ interface ApiKey {
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
+}
+
+interface KeyUsageSummary {
+  windowDays: number;
+  totals: {
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    errorRate: number;
+  };
+  daily: Array<{ date: string; costUsd: number; requests: number }>;
+  topModels: Array<{
+    modelId: string;
+    provider: string;
+    requests: number;
+    costUsd: number;
+  }>;
+}
+
+interface UsageState {
+  loading: boolean;
+  data: KeyUsageSummary | null;
+  error: string | null;
+}
+
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return n.toLocaleString();
+}
+
+function formatUsd(n: number): string {
+  if (n === 0) return "$0.00";
+  if (n < 0.01) return "<$0.01";
+  if (n < 1) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+/**
+ * Tiny inline SVG sparkline for the per-key usage panel. Renders a gradient
+ * area + line for daily cost; bars overlaid for request count so you can read
+ * volume and spend at a glance without pulling in a chart library.
+ */
+function UsageSparkline({
+  daily,
+}: {
+  daily: KeyUsageSummary["daily"];
+}) {
+  const W = 600;
+  const H = 80;
+  const PAD_X = 4;
+  const PAD_Y = 6;
+  const innerW = W - PAD_X * 2;
+  const innerH = H - PAD_Y * 2;
+
+  const maxCost = Math.max(...daily.map((d) => d.costUsd), 0.0001);
+  const maxReqs = Math.max(...daily.map((d) => d.requests), 1);
+  const stepX = innerW / Math.max(1, daily.length - 1);
+
+  const points = daily.map((d, i) => {
+    const x = PAD_X + i * stepX;
+    const y = PAD_Y + innerH - (d.costUsd / maxCost) * innerH;
+    return { x, y };
+  });
+
+  const linePath = points
+    .map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(2)},${p.y.toFixed(2)}`)
+    .join(" ");
+  const areaPath = `${linePath} L${(PAD_X + (daily.length - 1) * stepX).toFixed(
+    2,
+  )},${(PAD_Y + innerH).toFixed(2)} L${PAD_X},${(PAD_Y + innerH).toFixed(2)} Z`;
+
+  const barW = Math.max(1, stepX * 0.6);
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      className="w-full h-20"
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="30-day usage sparkline"
+    >
+      <defs>
+        <linearGradient id="kuFill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="currentColor" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {/* Request volume bars (subtle) */}
+      <g className="text-muted-foreground/40">
+        {daily.map((d, i) => {
+          if (d.requests === 0) return null;
+          const x = PAD_X + i * stepX - barW / 2;
+          const h = (d.requests / maxReqs) * innerH;
+          return (
+            <rect
+              key={i}
+              x={x.toFixed(2)}
+              y={(PAD_Y + innerH - h).toFixed(2)}
+              width={barW.toFixed(2)}
+              height={h.toFixed(2)}
+              fill="currentColor"
+              opacity="0.4"
+            />
+          );
+        })}
+      </g>
+      {/* Cost area */}
+      <g className="text-primary">
+        <path d={areaPath} fill="url(#kuFill)" />
+        <path
+          d={linePath}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      </g>
+    </svg>
+  );
 }
 
 function formatRelative(value: string | null): string {
@@ -33,6 +165,125 @@ function formatDate(value: string | null): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Renders the loaded per-key usage summary: 4 stat tiles, the 30-day cost
+ * sparkline, and a top-models breakdown. Empty state shown when the key has
+ * no recorded events yet.
+ */
+function KeyUsagePanel({ data }: { data: KeyUsageSummary }) {
+  const { totals, daily, topModels, windowDays } = data;
+  const empty = totals.requests === 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+          <BarChart3 className="w-3.5 h-3.5" />
+          Last {windowDays} days
+        </h3>
+      </div>
+
+      {empty ? (
+        <div className="border border-dashed border-border rounded-md p-6 text-center text-sm text-muted-foreground font-mono">
+          No requests recorded with this key yet.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+            <StatTile label="Requests" value={formatNumber(totals.requests)} />
+            <StatTile
+              label="Tokens"
+              value={formatNumber(totals.inputTokens + totals.outputTokens)}
+              sub={`${formatNumber(totals.inputTokens)} in · ${formatNumber(
+                totals.outputTokens,
+              )} out`}
+            />
+            <StatTile label="Spend" value={formatUsd(totals.costUsd)} />
+            <StatTile
+              label="Errors"
+              value={`${(totals.errorRate * 100).toFixed(1)}%`}
+              accent={totals.errorRate > 0.05 ? "warn" : undefined}
+            />
+          </div>
+
+          <div className="border border-border rounded-md bg-background/50 p-3">
+            <div className="flex items-center justify-between mb-2 text-[11px] font-mono text-muted-foreground uppercase tracking-wider">
+              <span>Daily spend</span>
+              <span>{formatUsd(totals.costUsd)} total</span>
+            </div>
+            <UsageSparkline daily={daily} />
+            <div className="flex justify-between text-[10px] font-mono text-muted-foreground/70 mt-1">
+              <span>{daily[0]?.date ?? ""}</span>
+              <span>{daily[daily.length - 1]?.date ?? ""}</span>
+            </div>
+          </div>
+
+          {topModels.length > 0 && (
+            <div className="border border-border rounded-md bg-background/50 overflow-hidden">
+              <div className="px-3 py-2 border-b border-border text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+                Top models
+              </div>
+              <ul className="divide-y divide-border/60">
+                {topModels.map((m) => (
+                  <li
+                    key={`${m.modelId}-${m.provider}`}
+                    className="flex items-center justify-between gap-3 px-3 py-2 text-xs font-mono"
+                  >
+                    <div className="min-w-0 truncate">
+                      <span className="text-foreground">{m.modelId}</span>
+                      <span className="text-muted-foreground ml-2">
+                        {m.provider}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0 text-muted-foreground">
+                      <span>{formatNumber(m.requests)} req</span>
+                      <span className="text-foreground">
+                        {formatUsd(m.costUsd)}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  accent?: "warn";
+}) {
+  return (
+    <div className="border border-border rounded-md bg-background/50 p-3">
+      <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div
+        className={`text-lg sm:text-xl font-bold font-mono mt-1 ${
+          accent === "warn" ? "text-yellow-400" : "text-foreground"
+        }`}
+      >
+        {value}
+      </div>
+      {sub && (
+        <div className="text-[10px] font-mono text-muted-foreground mt-1 truncate">
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Keys() {
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -44,6 +295,49 @@ export default function Keys() {
   const [revealedKey, setRevealedKey] = useState<{ key: string; name: string } | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  // Per-key usage panels are lazily loaded the first time they're expanded
+  // and cached thereafter. Toggling collapses without discarding the data so
+  // re-opening is instant.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [usageById, setUsageById] = useState<Record<string, UsageState>>({});
+
+  const toggleUsage = useCallback(
+    async (id: string) => {
+      const next = expandedId === id ? null : id;
+      setExpandedId(next);
+      if (next && !usageById[id]) {
+        setUsageById((prev) => ({
+          ...prev,
+          [id]: { loading: true, data: null, error: null },
+        }));
+        try {
+          const res = await fetch(`/api/keys/${id}/usage?days=30`, {
+            credentials: "include",
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body?.error?.message || `Failed (${res.status})`);
+          }
+          const data = (await res.json()) as KeyUsageSummary;
+          setUsageById((prev) => ({
+            ...prev,
+            [id]: { loading: false, data, error: null },
+          }));
+        } catch (err) {
+          setUsageById((prev) => ({
+            ...prev,
+            [id]: {
+              loading: false,
+              data: null,
+              error:
+                err instanceof Error ? err.message : "Failed to load usage",
+            },
+          }));
+        }
+      }
+    },
+    [expandedId, usageById],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -186,63 +480,104 @@ export default function Keys() {
               </tr>
             </thead>
             <tbody className="divide-y border-border">
-              {[...activeKeys, ...revokedKeys].map((key) => (
-                <tr key={key.id} className="hover:bg-muted/10 transition-colors">
-                  <td className="px-4 sm:px-6 py-4">
-                    <div className="font-medium text-foreground mb-1 flex items-center gap-2">
-                      {key.name}
-                      {key.revokedAt && (
-                        <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 text-[10px] font-mono uppercase">
-                          revoked
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 text-muted-foreground font-mono text-xs">
-                      {key.prefix}…
-                      <button
-                        onClick={() => copyToClipboard(key.prefix, key.id)}
-                        className="hover:text-foreground"
-                        title="Copy prefix"
-                      >
-                        {copiedId === key.id ? (
-                          <Check className="w-3 h-3 text-green-400" />
+              {[...activeKeys, ...revokedKeys].map((key) => {
+                const isOpen = expandedId === key.id;
+                const usage = usageById[key.id];
+                return (
+                  <React.Fragment key={key.id}>
+                    <tr className="hover:bg-muted/10 transition-colors">
+                      <td className="px-4 sm:px-6 py-4">
+                        <div className="flex items-start gap-2">
+                          <button
+                            onClick={() => toggleUsage(key.id)}
+                            className="mt-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                            title={isOpen ? "Hide usage" : "Show usage"}
+                            aria-label={isOpen ? "Hide usage" : "Show usage"}
+                            aria-expanded={isOpen}
+                          >
+                            {isOpen ? (
+                              <ChevronDown className="w-4 h-4" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4" />
+                            )}
+                          </button>
+                          <div className="min-w-0">
+                            <div className="font-medium text-foreground mb-1 flex items-center gap-2">
+                              {key.name}
+                              {key.revokedAt && (
+                                <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 text-[10px] font-mono uppercase">
+                                  revoked
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-muted-foreground font-mono text-xs">
+                              {key.prefix}…
+                              <button
+                                onClick={() => copyToClipboard(key.prefix, key.id)}
+                                className="hover:text-foreground"
+                                title="Copy prefix"
+                              >
+                                {copiedId === key.id ? (
+                                  <Check className="w-3 h-3 text-green-400" />
+                                ) : (
+                                  <Copy className="w-3 h-3" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">
+                        {formatDate(key.createdAt)}
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">
+                        {formatRelative(key.lastUsedAt)}
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 text-right font-mono whitespace-nowrap">
+                        {key.monthlyCapCents == null ? (
+                          <span className="text-muted-foreground">No cap</span>
                         ) : (
-                          <Copy className="w-3 h-3" />
+                          <span className="text-foreground">
+                            ${(key.monthlyCapCents / 100).toFixed(2)}
+                          </span>
                         )}
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">
-                    {formatDate(key.createdAt)}
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">
-                    {formatRelative(key.lastUsedAt)}
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-right font-mono whitespace-nowrap">
-                    {key.monthlyCapCents == null ? (
-                      <span className="text-muted-foreground">No cap</span>
-                    ) : (
-                      <span className="text-foreground">
-                        ${(key.monthlyCapCents / 100).toFixed(2)}
-                      </span>
+                      </td>
+                      <td className="px-4 sm:px-6 py-4 text-right">
+                        {key.revokedAt ? (
+                          <span className="text-muted-foreground/60 text-xs font-mono">—</span>
+                        ) : (
+                          <button
+                            onClick={() => handleRevoke(key.id)}
+                            disabled={revokingId === key.id}
+                            className="text-muted-foreground hover:text-red-400 text-xs font-mono px-2 py-1 rounded hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                            title="Revoke this key"
+                          >
+                            {revokingId === key.id ? "…" : "Revoke"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="bg-muted/10 border-t border-border/60">
+                        <td colSpan={5} className="px-4 sm:px-6 py-4 sm:py-5">
+                          {usage?.loading || !usage ? (
+                            <div className="flex items-center gap-2 text-muted-foreground text-sm font-mono py-6 justify-center">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Loading usage…
+                            </div>
+                          ) : usage.error ? (
+                            <div className="text-sm font-mono text-red-400 border border-red-500/40 bg-red-500/10 rounded-md px-3 py-2">
+                              {usage.error}
+                            </div>
+                          ) : usage.data ? (
+                            <KeyUsagePanel data={usage.data} />
+                          ) : null}
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-right">
-                    {key.revokedAt ? (
-                      <span className="text-muted-foreground/60 text-xs font-mono">—</span>
-                    ) : (
-                      <button
-                        onClick={() => handleRevoke(key.id)}
-                        disabled={revokingId === key.id}
-                        className="text-muted-foreground hover:text-red-400 text-xs font-mono px-2 py-1 rounded hover:bg-red-500/10 transition-colors disabled:opacity-50"
-                        title="Revoke this key"
-                      >
-                        {revokingId === key.id ? "…" : "Revoke"}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -3,6 +3,7 @@ import { models as catalog } from "../src/data/models";
 
 export interface RecordUsageInput {
   userId: string;
+  apiKeyId?: string | null;
   kind: "chat" | "image";
   modelId: string;
   provider: string;
@@ -21,11 +22,12 @@ export async function recordUsage(input: RecordUsageInput): Promise<void> {
   try {
     await query(
       `INSERT INTO usage_events
-         (user_id, kind, model_id, provider, input_tokens, output_tokens,
-          cost_usd, latency_ms, total_ms, success)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         (user_id, api_key_id, kind, model_id, provider, input_tokens,
+          output_tokens, cost_usd, latency_ms, total_ms, success)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         input.userId,
+        input.apiKeyId ?? null,
         input.kind,
         input.modelId,
         input.provider,
@@ -40,6 +42,120 @@ export async function recordUsage(input: RecordUsageInput): Promise<void> {
   } catch (err) {
     console.error("recordUsage failed:", err);
   }
+}
+
+export interface KeyUsageSummary {
+  windowDays: number;
+  totals: {
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    errorRate: number;
+  };
+  daily: Array<{ date: string; costUsd: number; requests: number }>;
+  topModels: Array<{ modelId: string; provider: string; requests: number; costUsd: number }>;
+}
+
+/**
+ * Aggregate usage scoped to a single API key. Mirrors getUsageSummary's shape
+ * so the front-end can reuse formatting helpers. Caller is responsible for
+ * verifying the key belongs to the requesting user before calling this.
+ */
+export async function getKeyUsageSummary(
+  apiKeyId: string,
+  windowDays = 30,
+): Promise<KeyUsageSummary> {
+  const days = Math.max(1, Math.min(90, Math.floor(windowDays)));
+
+  const totalsRes = await query<{
+    requests: string;
+    input_tokens: string;
+    output_tokens: string;
+    cost_usd: string;
+    errors: string;
+  }>(
+    `SELECT
+       COUNT(*)::text                                     AS requests,
+       COALESCE(SUM(input_tokens), 0)::text              AS input_tokens,
+       COALESCE(SUM(output_tokens), 0)::text             AS output_tokens,
+       COALESCE(SUM(cost_usd), 0)::text                  AS cost_usd,
+       COUNT(*) FILTER (WHERE success = FALSE)::text     AS errors
+     FROM usage_events
+     WHERE api_key_id = $1
+       AND created_at >= NOW() - ($2 || ' days')::interval`,
+    [apiKeyId, days],
+  );
+  const t = totalsRes.rows[0];
+  const requests = Number(t?.requests ?? 0);
+
+  const dailyRes = await query<{ day: string; cost_usd: string; requests: string }>(
+    `SELECT
+       to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
+       COALESCE(SUM(cost_usd), 0)::text                     AS cost_usd,
+       COUNT(*)::text                                       AS requests
+     FROM usage_events
+     WHERE api_key_id = $1
+       AND created_at >= NOW() - ($2 || ' days')::interval
+     GROUP BY 1
+     ORDER BY 1 ASC`,
+    [apiKeyId, days],
+  );
+  const dailyMap = new Map(
+    dailyRes.rows.map((r) => [
+      r.day,
+      { costUsd: Number(r.cost_usd), requests: Number(r.requests) },
+    ]),
+  );
+  const daily: KeyUsageSummary["daily"] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const entry = dailyMap.get(key);
+    daily.push({
+      date: key,
+      costUsd: entry?.costUsd ?? 0,
+      requests: entry?.requests ?? 0,
+    });
+  }
+
+  const topRes = await query<{
+    model_id: string;
+    provider: string;
+    requests: string;
+    cost_usd: string;
+  }>(
+    `SELECT model_id, provider,
+            COUNT(*)::text                       AS requests,
+            COALESCE(SUM(cost_usd), 0)::text    AS cost_usd
+     FROM usage_events
+     WHERE api_key_id = $1
+       AND created_at >= NOW() - ($2 || ' days')::interval
+     GROUP BY model_id, provider
+     ORDER BY COUNT(*) DESC
+     LIMIT 5`,
+    [apiKeyId, days],
+  );
+
+  return {
+    windowDays: days,
+    totals: {
+      requests,
+      inputTokens: Number(t?.input_tokens ?? 0),
+      outputTokens: Number(t?.output_tokens ?? 0),
+      costUsd: Number(t?.cost_usd ?? 0),
+      errorRate: requests > 0 ? Number(t?.errors ?? 0) / requests : 0,
+    },
+    daily,
+    topModels: topRes.rows.map((r) => ({
+      modelId: r.model_id,
+      provider: r.provider,
+      requests: Number(r.requests),
+      costUsd: Number(r.cost_usd),
+    })),
+  };
 }
 
 export interface UsageSummary {

@@ -290,6 +290,7 @@ export function registerApiRoutes(app: Express): void {
 
     const startTime = Date.now();
     const userId = req.auth!.user.id;
+    const apiKeyId = req.auth!.apiKeyId ?? null;
     try {
       if (model === "gemini-2.5-flash-image") {
         // Gemini generates one image per call; fan out for n>1.
@@ -321,6 +322,7 @@ export function registerApiRoutes(app: Express): void {
         // record requests + latency without a synthetic cost.
         void recordUsage({
           userId,
+          apiKeyId,
           kind: "image",
           modelId: "gemini-2.5-flash-image",
           provider: providerForModel("gemini-2.5-flash-image") || "Google",
@@ -357,6 +359,7 @@ export function registerApiRoutes(app: Express): void {
       const perImageCost = 0.04;
       void recordUsage({
         userId,
+        apiKeyId,
         kind: "image",
         modelId: "gpt-image-1",
         provider: providerForModel("gpt-image-1") || "OpenAI",
@@ -378,6 +381,7 @@ export function registerApiRoutes(app: Express): void {
       console.error("Image generation error:", err);
       void recordUsage({
         userId,
+        apiKeyId,
         kind: "image",
         modelId: model,
         provider: providerForModel(model) || "Unknown",

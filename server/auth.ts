@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { randomBytes, createHash } from "node:crypto";
 import { query } from "./db";
 import { isAuthenticated as isReplitAuthenticated } from "./replit_integrations/auth";
+import { getKeyUsageSummary } from "./usage";
 
 const KEY_PREFIX = "sk-sb-v1-";
 
@@ -330,6 +331,39 @@ export function registerKeyRoutes(app: Express): void {
       },
     });
   });
+
+  // GET /api/keys/:id/usage?days=30 — per-key analytics for the Keys page.
+  // Verifies the key belongs to the requesting user (and isn't the hidden
+  // dashboard key) before returning aggregated stats.
+  app.get(
+    "/api/keys/:id/usage",
+    requireSession,
+    async (req: Request, res: Response) => {
+      const userId = req.auth!.user.id;
+      const { id } = req.params;
+      const days = Math.max(
+        1,
+        Math.min(90, Number(req.query.days) || 30),
+      );
+      const owner = await query<{ id: string }>(
+        `SELECT id FROM api_keys
+          WHERE id = $1 AND user_id = $2 AND is_dashboard = FALSE`,
+        [id, userId],
+      );
+      if (owner.rowCount === 0) {
+        return res.status(404).json({ error: { message: "Key not found." } });
+      }
+      try {
+        const summary = await getKeyUsageSummary(id, days);
+        res.json(summary);
+      } catch (err) {
+        console.error("Per-key usage error:", err);
+        res
+          .status(500)
+          .json({ error: { message: "Failed to load key usage" } });
+      }
+    },
+  );
 
   // DELETE /api/keys/:id — revoke (does not delete row, sets revoked_at)
   app.delete("/api/keys/:id", requireSession, async (req: Request, res: Response) => {

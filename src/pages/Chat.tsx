@@ -107,6 +107,7 @@ interface ChatSettings {
   maxTokens: number;
   modelId: string;
   webSearch: boolean;
+  reasoningLevel?: "low" | "medium" | "high";
 }
 
 function loadSettings(): ChatSettings {
@@ -115,6 +116,7 @@ function loadSettings(): ChatSettings {
     maxTokens: 4096,
     modelId: DEFAULT_MODEL,
     webSearch: false,
+    reasoningLevel: "medium",
   };
   if (typeof window === "undefined") return defaults;
   try {
@@ -135,9 +137,11 @@ function uid() {
 function MessageBody({
   msg,
   isLastStreaming,
+  thinkingText,
 }: {
   msg: Message;
   isLastStreaming: boolean;
+  thinkingText?: string;
 }) {
   const renderText = (text: string, key: React.Key, showCursor: boolean) => {
     if (msg.role === "assistant") {
@@ -165,6 +169,18 @@ function MessageBody({
 
   // Legacy messages without blocks — render plain content.
   if (!msg.blocks || msg.blocks.length === 0) {
+    // Show thinking indicator if provided and no content yet
+    if (thinkingText && isLastStreaming && !msg.content) {
+      return (          <div className="text-sm leading-relaxed whitespace-pre-wrap break-words flex items-center gap-2">
+          <span className="text-muted-foreground">{thinkingText}</span>
+          <span className="flex gap-0.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" style={{ animation: "bounce 1.4s infinite", animationDelay: "0ms" }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" style={{ animation: "bounce 1.4s infinite", animationDelay: "150ms" }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" style={{ animation: "bounce 1.4s infinite", animationDelay: "300ms" }} />
+          </span>
+        </div>
+      );
+    }
     return renderText(msg.content, "legacy", isLastStreaming && !msg.content);
   }
 
@@ -506,6 +522,7 @@ export default function Chat() {
             temperature: settings.temperature,
             maxTokens: settings.maxTokens,
             tools: { webSearch: settings.webSearch },
+            reasoningLevel: settings.reasoningLevel,
             messages: history,
           }),
         });
@@ -914,6 +931,30 @@ export default function Chat() {
             </div>
           </div>
         </div>
+        {/* Reasoning level control (only shown for GPT-5/o series) */}
+        {activeModel.id.startsWith("gpt-5") || activeModel.id.startsWith("o") ? (
+          <div className="pt-4 border-t border-border space-y-2">
+            <div className="flex justify-between text-xs font-mono">
+              <label>Reasoning Level</label>
+              <span className="text-muted-foreground capitalize">{settings.reasoningLevel ?? "medium"}</span>
+            </div>
+            <select
+              value={settings.reasoningLevel ?? "medium"}
+              onChange={(e) => setSettings((s) => ({ 
+                ...s, 
+                reasoningLevel: e.target.value as "low" | "medium" | "high" 
+              }))}
+              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="low">Low — Faster, less reasoning</option>
+              <option value="medium">Medium — Balanced</option>
+              <option value="high">High — Slower, deeper thinking</option>
+            </select>
+            <p className="text-[11px] text-muted-foreground">
+              Controls how long the model thinks before responding. Higher = better results, slower responses.
+            </p>
+          </div>
+        ) : null}
         <div className="pt-4 border-t border-border">
           <div className="text-xs font-mono text-muted-foreground mb-1">Session Spend</div>
           <div className="font-mono text-2xl">{formatCost(sessionCost)}</div>
@@ -1062,7 +1103,21 @@ export default function Chat() {
                       ? "You"
                       : models.find((m) => m.id === msg.modelId)?.name ?? "Assistant"}
                   </div>
-                  <MessageBody msg={msg} isLastStreaming={isStreamingThis} />
+                  {(() => {
+            const isReasoningModel = 
+              activeModel.id.startsWith("gpt-5") || 
+              activeModel.id.startsWith("o");
+            const hasBlocksContent = msg.blocks?.some((b): b is TextBlock => b.type === "text" && Boolean(b.text)) ?? false;
+            const hasContent = Boolean(msg.content) || hasBlocksContent;
+            const showThinking = isStreamingThis && isReasoningModel && !hasContent;
+            return (
+              <MessageBody 
+                msg={msg} 
+                isLastStreaming={isStreamingThis}
+                thinkingText={showThinking ? "Thinking..." : undefined}
+              />
+            );
+          })()}
                   {msg.role === "assistant" && !isStreamingThis && (
                     <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                       {!streaming && (

@@ -123,6 +123,16 @@ export async function ensureSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS usage_events_model_created_idx
       ON usage_events(model_id, created_at DESC);
 
+    -- Attribute every usage event to the API key that authorized it. Nullable
+    -- to preserve any rows recorded before keys became mandatory; ON DELETE
+    -- SET NULL so rotating the auto-provisioned dashboard key doesn't wipe its
+    -- historical usage from analytics.
+    ALTER TABLE usage_events
+      ADD COLUMN IF NOT EXISTS api_key_id UUID
+      REFERENCES api_keys(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS usage_events_api_key_created_idx
+      ON usage_events(api_key_id, created_at DESC) WHERE api_key_id IS NOT NULL;
+
     -- Credit balance lives on the user row for cheap reads. Stored as integer
     -- cents to avoid floating-point drift. Two grant timestamps double as
     -- idempotency flags so we never double-grant the welcome or legacy bonus.

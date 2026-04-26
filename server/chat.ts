@@ -152,9 +152,11 @@ async function runOpenAI(opts: {
   temperature?: number;
   maxTokens?: number;
   useTools: boolean;
+  reasoningLevel?: "low" | "medium" | "high";
   ctx: StreamCtx;
 }): Promise<void> {
   const isReasoning = opts.model.startsWith("gpt-5") || opts.model.startsWith("o");
+  const reasoningEffort = isReasoning ? (opts.reasoningLevel ?? "medium") : undefined;
 
   // OpenAI keeps the full conversation as an array we mutate across rounds.
   const messages: any[] = opts.messages.map((m) => ({
@@ -181,6 +183,7 @@ async function runOpenAI(opts: {
       messages,
       stream: true,
       ...(isReasoning ? {} : { temperature: opts.temperature ?? 0.7 }),
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       max_completion_tokens: opts.maxTokens ?? 4096,
       ...(opts.useTools && iter < MAX_TOOL_ITERATIONS
         ? { tools: [WEB_SEARCH_OPENAI_TOOL] }
@@ -434,6 +437,7 @@ export function registerChatRoutes(app: Express): void {
       temperature,
       maxTokens,
       tools: clientTools,
+      reasoningLevel,
     } = (req.body || {}) as ChatBody;
 
     if (!modelId || !Array.isArray(messages) || messages.length === 0) {
@@ -484,6 +488,7 @@ export function registerChatRoutes(app: Express): void {
           temperature,
           maxTokens,
           useTools: useWebSearch,
+          reasoningLevel,
           ctx,
         });
       } else if (modelId in anthropicMap) {
@@ -529,6 +534,7 @@ export function registerChatRoutes(app: Express): void {
       // Record real usage for the analytics page. Best-effort; never blocks.
       void recordUsage({
         userId: req.auth!.user.id,
+        apiKeyId: req.auth!.apiKeyId ?? null,
         kind: "chat",
         modelId,
         provider: catalogEntry?.provider ?? providerForModel(modelId),
@@ -555,6 +561,7 @@ export function registerChatRoutes(app: Express): void {
       send({ error: message });
       void recordUsage({
         userId: req.auth!.user.id,
+        apiKeyId: req.auth!.apiKeyId ?? null,
         kind: "chat",
         modelId,
         provider: catalogEntry?.provider ?? providerForModel(modelId),
