@@ -13,6 +13,7 @@ import {
   Globe,
   ExternalLink,
   AlertTriangle,
+  RotateCcw,
 } from "lucide-react";
 import { models } from "../data/models";
 import { Markdown } from "../components/Markdown";
@@ -380,54 +381,20 @@ export default function Chat() {
     }
   }
 
-  async function send() {
-    const text = input.trim();
-    if (!text || streaming) return;
-
-    let conv = active;
-    if (!conv) {
-      conv = {
-        id: uid(),
-        title: text.slice(0, 40),
-        messages: [],
-        createdAt: Date.now(),
-        modelId: settings.modelId,
-      };
-      setConversations((prev) => [conv!, ...prev]);
-      setActiveId(conv.id);
-    }
-
-    const userMsg: Message = {
-      id: uid(),
-      role: "user",
-      content: text,
-      blocks: [{ type: "text", text }],
-    };
-    const assistantId = uid();
-    const assistantMsg: Message = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-      blocks: [],
-      modelId: conv.modelId,
-    };
-
-    const convId = conv.id;
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === convId
-          ? {
-              ...c,
-              title: c.messages.length === 0 ? text.slice(0, 40) : c.title,
-              messages: [...c.messages, userMsg, assistantMsg],
-            }
-          : c
-      )
-    );
-
-    setInput("");
+  /** Stream a chat completion into an existing assistant message slot.
+   * Used by both `send()` and `regenerate()`. */
+  async function streamAssistant({
+    convId,
+    modelId,
+    assistantId,
+    history,
+  }: {
+    convId: string;
+    modelId: string;
+    assistantId: string;
+    history: { role: Role; content: string }[];
+  }) {
     setStreaming(true);
-
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -451,17 +418,11 @@ export default function Chat() {
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          modelId: conv.modelId,
+          modelId,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
           tools: { webSearch: settings.webSearch },
-          messages: [
-            ...conv.messages.map((m) => ({
-              role: m.role,
-              content: messagePlainText(m),
-            })),
-            { role: "user", content: text },
-          ],
+          messages: history,
         }),
       });
 
@@ -574,6 +535,119 @@ export default function Chat() {
       setStreaming(false);
       abortRef.current = null;
     }
+  }
+
+  async function send() {
+    const text = input.trim();
+    if (!text || streaming) return;
+
+    let conv = active;
+    if (!conv) {
+      conv = {
+        id: uid(),
+        title: text.slice(0, 40),
+        messages: [],
+        createdAt: Date.now(),
+        modelId: settings.modelId,
+      };
+      setConversations((prev) => [conv!, ...prev]);
+      setActiveId(conv.id);
+    }
+
+    const userMsg: Message = {
+      id: uid(),
+      role: "user",
+      content: text,
+      blocks: [{ type: "text", text }],
+    };
+    const assistantId = uid();
+    const assistantMsg: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      blocks: [],
+      modelId: conv.modelId,
+    };
+
+    const convId = conv.id;
+    const prevMessages = conv.messages;
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              title: c.messages.length === 0 ? text.slice(0, 40) : c.title,
+              messages: [...c.messages, userMsg, assistantMsg],
+            }
+          : c
+      )
+    );
+
+    setInput("");
+
+    await streamAssistant({
+      convId,
+      modelId: conv.modelId,
+      assistantId,
+      history: [
+        ...prevMessages.map((m) => ({ role: m.role, content: messagePlainText(m) })),
+        { role: "user" as Role, content: text },
+      ],
+    });
+  }
+
+  /** Re-run the last user prompt for an assistant message and replace its body. */
+  async function regenerate(assistantMessageId: string) {
+    if (streaming || !active) return;
+    const idx = active.messages.findIndex((m) => m.id === assistantMessageId);
+    if (idx <= 0) return;
+    const target = active.messages[idx];
+    if (target.role !== "assistant") return;
+
+    // Build history from every message before this assistant turn.
+    const priorMessages = active.messages.slice(0, idx);
+    const history = priorMessages.map((m) => ({
+      role: m.role,
+      content: messagePlainText(m),
+    }));
+    if (history.length === 0 || history[history.length - 1].role !== "user") return;
+
+    const convId = active.id;
+    const modelId = target.modelId ?? active.modelId;
+
+    // Reset the assistant message in place so the order stays intact.
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === assistantMessageId
+                  ? {
+                      ...m,
+                      content: "",
+                      blocks: [],
+                      modelId,
+                      latencyMs: undefined,
+                      totalMs: undefined,
+                      cost: undefined,
+                      inputTokens: undefined,
+                      outputTokens: undefined,
+                      error: false,
+                    }
+                  : m
+              ),
+            }
+          : c
+      )
+    );
+
+    await streamAssistant({
+      convId,
+      modelId,
+      assistantId: assistantMessageId,
+      history,
+    });
   }
 
   function stop() {
@@ -828,6 +902,18 @@ export default function Chat() {
                     <span className="text-xs font-mono text-muted-foreground">
                       {formatCost(msg.cost)}
                     </span>
+                  )}
+                  {msg.role === "assistant" && !streaming && (
+                    <button
+                      type="button"
+                      onClick={() => void regenerate(msg.id)}
+                      title="Regenerate response"
+                      aria-label="Regenerate response"
+                      className="ml-auto inline-flex items-center gap-1 text-xs font-mono text-muted-foreground hover:text-foreground border border-border bg-muted/30 hover:bg-muted px-1.5 py-0.5 rounded transition-colors"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span className="hidden sm:inline">Regenerate</span>
+                    </button>
                   )}
                 </div>
                 <MessageBody

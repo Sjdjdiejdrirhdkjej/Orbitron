@@ -96,17 +96,6 @@ export function AppLayout() {
         </button>
       </div>
 
-      <div className="p-4 border-b border-border">
-        <div className="text-xs font-mono text-muted-foreground mb-1">WORKSPACE</div>
-        <div className="flex items-center justify-between p-2 hover:bg-accent rounded-md cursor-pointer border border-transparent hover:border-border transition-colors">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-6 h-6 rounded bg-primary/20 text-primary grid place-items-center font-mono text-xs font-bold shrink-0">A</div>
-            <span className="text-sm font-medium truncate">Acme Corp</span>
-          </div>
-          <span className="text-xs text-muted-foreground font-mono shrink-0">$42.50</span>
-        </div>
-      </div>
-
       <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
         {navItems.map((item) => {
           const isActive = location.pathname.startsWith(item.path);
