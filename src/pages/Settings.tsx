@@ -15,6 +15,7 @@ import {
   Bell,
   BellOff,
   DollarSign,
+  Trash2,
 } from "lucide-react";
 import { useAuth, displayNameFor, initialsFor } from "../lib/auth";
 
@@ -104,6 +105,34 @@ export default function Settings() {
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState(false);
   const [revokeNotice, setRevokeNotice] = useState<string | null>(null);
+
+  // Account deletion state. The user must type "delete my account" to enable
+  // the destructive button — protects against accidental clicks.
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const DELETE_PHRASE = "delete my account";
+
+  async function deleteAccount() {
+    if (deleteConfirmText.trim().toLowerCase() !== DELETE_PHRASE) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch("/api/account", { method: "DELETE" });
+      if (!res.ok && res.status !== 204) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      // Server has already destroyed the session and cleared the cookie.
+      // Hard-navigate to the marketing landing so all in-memory state is reset.
+      window.location.href = "/";
+    } catch (err) {
+      console.error("Account deletion failed:", err);
+      setDeleteError(
+        err instanceof Error ? err.message : "Failed to delete account",
+      );
+      setDeleting(false);
+    }
+  }
 
   // Preferences state
   const [preferences, setPreferences] = useState<UserPreferences>(loadLocalPreferences);
@@ -409,6 +438,60 @@ export default function Settings() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              {/* Danger zone — permanent account deletion */}
+              <div className="border border-destructive/40 rounded-lg p-4 sm:p-5 bg-destructive/5">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-sm">Delete account</h3>
+                    <p className="text-xs text-muted-foreground font-mono mt-1">
+                      Permanently removes your profile, API keys, usage history,
+                      credit balance, and shared chat links. This cannot be undone.
+                    </p>
+                    <div className="mt-4 space-y-3">
+                      <div>
+                        <label
+                          htmlFor="delete-confirm"
+                          className="text-xs font-mono text-muted-foreground"
+                        >
+                          Type <span className="font-bold text-foreground">{DELETE_PHRASE}</span> to confirm
+                        </label>
+                        <input
+                          id="delete-confirm"
+                          type="text"
+                          autoComplete="off"
+                          value={deleteConfirmText}
+                          onChange={(e) => setDeleteConfirmText(e.target.value)}
+                          disabled={deleting}
+                          className="mt-1 w-full sm:w-80 bg-background border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-destructive"
+                          placeholder={DELETE_PHRASE}
+                        />
+                      </div>
+                      {deleteError && (
+                        <div className="text-xs font-mono text-destructive">
+                          {deleteError}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => void deleteAccount()}
+                        disabled={
+                          deleting ||
+                          deleteConfirmText.trim().toLowerCase() !== DELETE_PHRASE
+                        }
+                        className="inline-flex items-center gap-2 bg-destructive text-destructive-foreground text-sm font-medium px-4 py-2 rounded-md hover:bg-destructive/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {deleting ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                        {deleting ? "Deleting…" : "Delete my account"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}

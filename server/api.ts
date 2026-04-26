@@ -406,6 +406,30 @@ export function registerApiRoutes(app: Express): void {
     res.json({ slug, url: `/share/${slug}` });
   });
 
+  // DELETE /api/account — permanently delete the authenticated user. Removes
+  // the users row, which CASCADEs to api_keys, usage_events, credit_grants,
+  // and shared_chats. Then destroys the session so the browser is signed out.
+  // Frontend should redirect to "/" after a successful 204.
+  app.delete("/api/account", requireAuth, async (req: Request, res: Response) => {
+    const userId = (req.user as { claims: { sub: string } }).claims.sub;
+    try {
+      await query(`DELETE FROM users WHERE id = $1`, [userId]);
+    } catch (err) {
+      console.error("Account deletion failed:", err);
+      return res
+        .status(500)
+        .json({ error: { message: "Failed to delete account" } });
+    }
+    // Best-effort session teardown. We don't fail the request if logout/destroy
+    // errors — the user row is already gone, so any leftover session is inert.
+    req.logout(() => {
+      req.session?.destroy(() => {
+        res.clearCookie("connect.sid");
+        res.status(204).end();
+      });
+    });
+  });
+
   // GET /api/share/:slug — public, no auth. Returns the snapshot and metadata
   // for the public viewer page.
   app.get("/api/share/:slug", async (req: Request, res: Response) => {
