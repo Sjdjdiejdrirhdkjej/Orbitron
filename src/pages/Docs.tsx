@@ -73,6 +73,7 @@ export default function Docs() {
             <h4 className="font-bold text-sm mb-2">Endpoints</h4>
             <ul className="space-y-1.5 text-sm text-muted-foreground">
               <li><a href="#chat" className="hover:text-foreground">Chat Completions</a></li>
+              <li><a href="#openai-chat" className="hover:text-foreground">OpenAI Chat Completions</a></li>
               <li><a href="#anthropic" className="hover:text-foreground">Anthropic Messages</a></li>
               <li><a href="#images" className="hover:text-foreground">Image Generation</a></li>
               <li><a href="#models" className="hover:text-foreground">List Models</a></li>
@@ -291,6 +292,135 @@ export default function Docs() {
               <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
                 <code>{`{\n  "modelId": "claude-sonnet-4.6",\n  "messages": [\n    { "role": "user", "content": "Hello!" }\n  ]\n}`}</code>
               </pre>
+            </div>
+          </section>
+
+          {/* OpenAI-Compatible Chat Completions Section */}
+          <section id="openai-chat" className="mb-16">
+            <h2 className="text-2xl font-bold mb-4">OpenAI Chat Completions (Compatible)</h2>
+            <div className="flex items-center gap-3 mb-6">
+              <span className="px-2 py-1 bg-green-500/20 text-green-400 font-mono text-xs font-bold rounded">POST</span>
+              <code className="text-sm font-mono text-muted-foreground">{baseUrl}/api/v1/chat/completions</code>
+            </div>
+            <p className="text-muted-foreground mb-6 text-sm leading-relaxed">
+              Drop-in replacement for OpenAI's{' '}
+              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">/v1/chat/completions</code>{' '}
+              endpoint. Point any OpenAI SDK at Orbitron to use{' '}
+              <span className="text-foreground">any</span> model in the catalog —
+              including Anthropic and Google models — through the standard
+              OpenAI request and response shape. Mounted at three paths so the
+              SDK works whether you set{' '}
+              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">baseURL</code>{' '}
+              to <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">/api</code>,{' '}
+              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">/api/v1</code>, or{' '}
+              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">/v1</code>.
+            </p>
+
+            <h3 className="text-lg font-bold mb-3">OpenAI SDK (TypeScript)</h3>
+            <div className="rounded-lg border border-border overflow-hidden my-6">
+              <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
+                <span className="text-xs font-mono px-2 py-1 rounded bg-background text-foreground shadow-sm">Node.js</span>
+                <CopyButton text={`import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '${baseUrl}/api/v1',\n  apiKey: process.env.ORBITRON_API_KEY,\n});\n\nconst completion = await client.chat.completions.create({\n  model: 'claude-sonnet-4.6',\n  messages: [{ role: 'user', content: 'Hello, world!' }],\n});\n\nconsole.log(completion.choices[0].message.content);`} />
+              </div>
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{`import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '${baseUrl}/api/v1',\n  apiKey: process.env.ORBITRON_API_KEY,\n});\n\nconst completion = await client.chat.completions.create({\n  model: 'claude-sonnet-4.6',\n  messages: [{ role: 'user', content: 'Hello, world!' }],\n});\n\nconsole.log(completion.choices[0].message.content);`}</code>
+              </pre>
+            </div>
+
+            <h3 className="text-lg font-bold mb-3">OpenAI SDK (Python)</h3>
+            <div className="rounded-lg border border-border overflow-hidden my-6">
+              <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
+                <span className="text-xs font-mono px-2 py-1 rounded bg-background text-foreground shadow-sm">Python</span>
+                <CopyButton text={`import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    base_url='${baseUrl}/api/v1',\n    api_key=os.environ['ORBITRON_API_KEY'],\n)\n\ncompletion = client.chat.completions.create(\n    model='claude-sonnet-4.6',\n    messages=[{'role': 'user', 'content': 'Hello, world!'}],\n)\nprint(completion.choices[0].message.content)`} />
+              </div>
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{`import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    base_url='${baseUrl}/api/v1',\n    api_key=os.environ['ORBITRON_API_KEY'],\n)\n\ncompletion = client.chat.completions.create(\n    model='claude-sonnet-4.6',\n    messages=[{'role': 'user', 'content': 'Hello, world!'}],\n)\nprint(completion.choices[0].message.content)`}</code>
+              </pre>
+            </div>
+
+            <h3 className="text-lg font-bold mb-3">cURL</h3>
+            <div className="rounded-lg border border-border overflow-hidden my-6">
+              <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
+                <span className="text-xs font-mono px-2 py-1 rounded bg-background text-foreground shadow-sm">cURL</span>
+                <CopyButton text={`curl ${baseUrl}/api/v1/chat/completions \\\n  -H 'Authorization: Bearer $ORBITRON_API_KEY' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\n    "model": "gpt-5.4",\n    "messages": [{"role": "user", "content": "Hello!"}]\n  }'`} />
+              </div>
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{`curl ${baseUrl}/api/v1/chat/completions \\\n  -H 'Authorization: Bearer $ORBITRON_API_KEY' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\n    "model": "gpt-5.4",\n    "messages": [{"role": "user", "content": "Hello!"}]\n  }'`}</code>
+              </pre>
+            </div>
+
+            <h3 className="text-lg font-bold mb-3">Request Body</h3>
+            <div className="border border-border rounded-lg bg-card p-4 space-y-4 font-mono text-sm mb-6">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-foreground font-bold">model</span>
+                  <span className="text-muted-foreground text-xs">string</span>
+                  <span className="text-red-400 text-xs">Required</span>
+                </div>
+                <div className="text-muted-foreground text-xs mb-2">Any catalog id (e.g. <span className="text-foreground">"gpt-5.4"</span>, <span className="text-foreground">"claude-sonnet-4.6"</span>, <span className="text-foreground">"gemini-3-pro"</span>) or an Anthropic-style dashed name.</div>
+              </div>
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-foreground font-bold">messages</span>
+                  <span className="text-muted-foreground text-xs">array</span>
+                  <span className="text-red-400 text-xs">Required</span>
+                </div>
+                <div className="text-muted-foreground text-xs">Conversation turns with <span className="text-foreground">role</span> ("system" | "user" | "assistant" | "developer") and <span className="text-foreground">content</span> as a string or array of <span className="text-foreground">{`{ type: "text", text }`}</span> parts.</div>
+              </div>
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-foreground font-bold">max_tokens</span>
+                  <span className="text-muted-foreground text-xs">number</span>
+                  <span className="text-muted-foreground text-xs">Optional</span>
+                </div>
+                <div className="text-muted-foreground text-xs">Maximum tokens to generate. Defaults to 4096. Hard-capped at 8192. Newer SDKs may send <span className="text-foreground">max_completion_tokens</span> instead — both are accepted.</div>
+              </div>
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-foreground font-bold">temperature</span>
+                  <span className="text-muted-foreground text-xs">number</span>
+                  <span className="text-muted-foreground text-xs">Optional</span>
+                </div>
+                <div className="text-muted-foreground text-xs">Sampling temperature, 0 to 2. Defaults to 0.7.</div>
+              </div>
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-foreground font-bold">stream</span>
+                  <span className="text-muted-foreground text-xs">boolean</span>
+                  <span className="text-muted-foreground text-xs">Optional</span>
+                </div>
+                <div className="text-muted-foreground text-xs">When <span className="text-foreground">true</span>, returns OpenAI-format SSE chunks (<span className="text-foreground">chat.completion.chunk</span>) terminated by <span className="text-foreground">data: [DONE]</span>.</div>
+              </div>
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-foreground font-bold">reasoning_effort</span>
+                  <span className="text-muted-foreground text-xs">string</span>
+                  <span className="text-muted-foreground text-xs">Optional</span>
+                </div>
+                <div className="text-muted-foreground text-xs">For reasoning models (GPT-5, o-series). Values: "low", "medium", "high".</div>
+              </div>
+            </div>
+
+            <h3 className="text-lg font-bold mb-3">Response</h3>
+            <div className="rounded-lg border border-border overflow-hidden">
+              <div className="flex items-center justify-end border-b border-border bg-muted/30 px-4 py-2">
+                <CopyButton text={`{\n  "id": "chatcmpl-abc...",\n  "object": "chat.completion",\n  "created": 1710000000,\n  "model": "gpt-5.4",\n  "choices": [\n    {\n      "index": 0,\n      "message": { "role": "assistant", "content": "Hello!" },\n      "finish_reason": "stop"\n    }\n  ],\n  "usage": {\n    "prompt_tokens": 12,\n    "completion_tokens": 8,\n    "total_tokens": 20\n  }\n}`} />
+              </div>
+              <pre className="p-4 text-sm font-mono text-muted-foreground bg-card overflow-x-auto">
+                <code>{`{\n  "id": "chatcmpl-abc...",\n  "object": "chat.completion",\n  "created": 1710000000,\n  "model": "gpt-5.4",\n  "choices": [\n    {\n      "index": 0,\n      "message": { "role": "assistant", "content": "Hello!" },\n      "finish_reason": "stop"\n    }\n  ],\n  "usage": {\n    "prompt_tokens": 12,\n    "completion_tokens": 8,\n    "total_tokens": 20\n  }\n}`}</code>
+              </pre>
+            </div>
+
+            <div className="p-4 bg-muted/30 border border-border rounded-lg mt-6">
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                <strong className="text-foreground">Notes.</strong> The compat
+                surface focuses on text generation. Image inputs (vision parts),
+                tool/function calling, and the <span className="text-foreground">tool</span> role
+                are not supported here yet — use the native{' '}
+                <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">/api/chat</code>{' '}
+                endpoint for those. Pricing and credit deduction match the
+                catalog and behave identically to <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-muted/40 text-foreground">/api/chat</code>.
+              </p>
             </div>
           </section>
 

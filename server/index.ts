@@ -4,6 +4,7 @@ import { registerChatRoutes } from "./chat";
 import { registerApiRoutes } from "./api";
 import { registerKeyRoutes } from "./auth";
 import { registerAnthropicCompatRoutes } from "./anthropicCompat";
+import { registerOpenAICompatRoutes } from "./openaiCompat";
 import {
   setupAuth,
   registerAuthRoutes,
@@ -40,6 +41,7 @@ async function start() {
   registerKeyRoutes(app);
   registerChatRoutes(app);
   registerAnthropicCompatRoutes(app);
+  registerOpenAICompatRoutes(app);
   registerApiRoutes(app);
 
   if (!isProduction) {

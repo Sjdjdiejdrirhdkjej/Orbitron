@@ -142,6 +142,16 @@ Every successful chat and image request appends a row to `usage_events` (user_id
 
 All endpoints live in `server/api.ts` (or `server/chat.ts` for `/api/chat`, `server/anthropicCompat.ts` for the Anthropic-compatible surface) and are registered in `server/index.ts`.
 
+### OpenAI-Compatible Endpoint
+
+`POST /api/v1/chat/completions` is a drop-in surface for the official OpenAI SDKs (`openai` for both Node and Python). Implemented in `server/openaiCompat.ts`, registered in `server/index.ts`. Mounted on three paths so the SDK works regardless of how the user sets `baseURL`: `/api/v1/chat/completions` (baseURL=`${origin}/api/v1`), `/v1/chat/completions` (baseURL=`${origin}/v1`), and `/api/chat/completions` (baseURL=`${origin}/api`, which is what the Docs quickstart advertises). Auth uses the existing `requireApiKey` middleware (Bearer-only — OpenAI SDKs always send `Authorization: Bearer <key>`).
+
+Request body matches OpenAI's `/v1/chat/completions`: `{ model, messages, max_tokens? | max_completion_tokens?, temperature?, stream?, reasoning_effort? }`. The `model` field accepts any catalog id (`gpt-5.4`, `claude-sonnet-4.6`, `gemini-3-pro`) and also rewrites Anthropic-style dashed names. Message `content` accepts either a string or an array of `{ type:"text", text }` parts; non-text parts (images, audio) are dropped. The `developer` role is folded into `system`; the `tool` role is dropped (function calling passthrough is not supported here — use `/api/chat`).
+
+Routing reuses the same exported `runOpenAI` / `runAnthropic` / `runGemini` runners and catalog id maps from `server/chat.ts` so any catalog model is reachable through the OpenAI shape (the OpenRouter trick — e.g. an OpenAI SDK can call `claude-sonnet-4.6` and Orbitron will route to Anthropic). Tools are not enabled. Credit reservation, refund, audit, and `recordUsage` mirror `/api/chat` exactly.
+
+Non-streaming responses return the standard `ChatCompletion` shape (`{ id:"chatcmpl-…", object:"chat.completion", created, model, choices:[{index, message:{role,content}, finish_reason}], usage:{prompt_tokens, completion_tokens, total_tokens} }`). Streaming (`stream:true`) emits `chat.completion.chunk` events: an opening role-only delta, content deltas, then a final empty-delta chunk carrying `finish_reason` and `usage`, terminated by the `data: [DONE]` sentinel. `finish_reason` is `length` when output hits the cap, otherwise `stop`. Errors during streaming are surfaced as a final `data:` chunk with `{error:{message,type:"api_error"}}` before `[DONE]`. Insufficient credits return HTTP 402 with `type:"insufficient_quota"` to match what OpenAI SDK error handling looks for.
+
 ### Anthropic-Compatible Endpoint
 
 `POST /api/v1/messages` (also mounted at `/v1/messages`) is a drop-in surface for the official Anthropic SDKs (`@anthropic-ai/sdk`, `anthropic` for Python). Implemented in `server/anthropicCompat.ts`. Auth accepts both `x-api-key: sk-sb-v1-…` (Anthropic SDK default) and `Authorization: Bearer sk-sb-v1-…` via the new `requireApiKeyAnthropic` middleware in `server/auth.ts`.
@@ -192,6 +202,7 @@ server/
   index.ts               Express + Vite middleware, port 5000
   chat.ts                /api/chat — provider routing + SSE streaming
   anthropicCompat.ts     /api/v1/messages — Anthropic SDK-compatible shape
+  openaiCompat.ts        /api/v1/chat/completions — OpenAI SDK-compatible shape
   api.ts                 /api/status, /api/models, /api/models/:id, /api/images
 src/
   App.tsx                Routes + Cmd+K palette
