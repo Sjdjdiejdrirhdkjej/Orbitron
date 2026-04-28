@@ -20,50 +20,46 @@ import {
   MAX_MESSAGES_PER_REQUEST,
   type ChatMessage,
   type StreamCtx,
+  type ModelToolCallChunk,
 } from "./chat";
+import {
+  anthropicCompatMessagesToChat,
+  anthropicToOpenaiTools,
+  anthropicToGeminiTools,
+  anthropicToOpenaiToolChoice,
+  anthropicToGeminiToolChoice,
+  type AnthropicCompatMessage,
+  type AnthropicCompatSystem,
+  type AnthropicToolDef,
+  type AnthropicToolChoice,
+} from "./compatTools";
 
 // ---------------------------------------------------------------------------
-// Anthropic-compatible request/response types (subset we accept)
+// Anthropic-compatible request types (subset we accept)
 // ---------------------------------------------------------------------------
-
-type AnthropicTextBlock = { type: "text"; text: string };
-type AnthropicContentBlock = AnthropicTextBlock | { type: string; [k: string]: unknown };
-
-interface AnthropicMessageIn {
-  role: "user" | "assistant";
-  content: string | AnthropicContentBlock[];
-}
-
-type AnthropicSystem = string | AnthropicContentBlock[];
 
 interface AnthropicMessagesBody {
   model?: string;
-  messages?: AnthropicMessageIn[];
-  system?: AnthropicSystem;
+  messages?: AnthropicCompatMessage[];
+  system?: AnthropicCompatSystem;
   max_tokens?: number;
   temperature?: number;
   stream?: boolean;
+  tools?: AnthropicToolDef[];
+  tool_choice?: AnthropicToolChoice;
 }
 
 // ---------------------------------------------------------------------------
-// Model id resolution
-//
-// Anthropic SDKs send their canonical dashed names (e.g. "claude-opus-4-7").
-// Our catalog stores the dotted variants ("claude-opus-4.7"). We accept either
-// form so out-of-the-box clients work, while still allowing routing to
-// non-Anthropic catalog models (e.g. "gpt-5.4") via this same endpoint.
+// Model id resolution (accept dashed Anthropic native names plus catalog ids)
 // ---------------------------------------------------------------------------
 
 function resolveCatalogId(modelParam: string): string | null {
   if (catalog.find((m) => m.id === modelParam)) return modelParam;
-  // Try dashed -> dotted (Anthropic native naming): claude-opus-4-7 -> claude-opus-4.7
   const dotted = modelParam.replace(
     /^(claude-[a-z]+-)(\d+)-(\d+)(.*)$/,
     "$1$2.$3$4",
   );
   if (catalog.find((m) => m.id === dotted)) return dotted;
-  // Try undated Anthropic snapshot strings (e.g. "claude-sonnet-4-5-20250929")
-  // by stripping a trailing -YYYYMMDD before the dash->dot rewrite.
   const undated = modelParam.replace(/-(\d{8})$/, "");
   if (undated !== modelParam) {
     const undatedDotted = undated.replace(
@@ -75,30 +71,14 @@ function resolveCatalogId(modelParam: string): string | null {
   return null;
 }
 
-function flattenContent(content: string | AnthropicContentBlock[]): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((b) => {
-      if (b && typeof b === "object" && b.type === "text" && typeof (b as AnthropicTextBlock).text === "string") {
-        return (b as AnthropicTextBlock).text;
-      }
-      // Silently drop non-text blocks (images, tool_use, etc) — vision and
-      // tool passthrough aren't supported through the compat surface yet.
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
-function flattenSystem(system: AnthropicSystem | undefined): string {
-  if (!system) return "";
-  if (typeof system === "string") return system;
-  return flattenContent(system);
-}
-
 function newMessageId(): string {
   return `msg_${randomBytes(12).toString("base64url")}`;
+}
+
+interface AssembledToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,8 +123,6 @@ export function registerAnthropicCompatRoutes(app: Express): void {
       });
     }
 
-    // Resolve catalog id (accept both dashed Anthropic native names and any
-    // catalog id, so users can route to OpenAI/Gemini models too).
     const catalogId = resolveCatalogId(body.model);
     if (!catalogId) {
       return res.status(400).json({
@@ -176,20 +154,44 @@ export function registerAnthropicCompatRoutes(app: Express): void {
       Math.min(Math.floor(body.max_tokens), MAX_OUTPUT_TOKENS_HARD_CAP),
     );
 
-    // Translate Anthropic-shape input into the runner's flat ChatMessage[].
-    const sysText = flattenSystem(body.system);
-    const messages: ChatMessage[] = [];
-    if (sysText) messages.push({ role: "system", content: sysText });
-    for (const m of body.messages) {
-      if (!m || (m.role !== "user" && m.role !== "assistant")) continue;
-      const text = flattenContent(m.content);
-      messages.push({ role: m.role, content: text });
+    // Translate Anthropic-shape input (with tool_use / tool_result blocks)
+    // into the runner's flat ChatMessage[].
+    const messages: ChatMessage[] = anthropicCompatMessagesToChat(
+      body.system,
+      body.messages,
+    );
+    if (messages.length === 0) {
+      return res.status(400).json({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "'messages' had no usable content",
+        },
+      });
+    }
+
+    // Validate tools.
+    const userAnthropicTools: AnthropicToolDef[] | undefined =
+      Array.isArray(body.tools) && body.tools.length > 0 ? body.tools : undefined;
+    const userAnthropicToolChoice = body.tool_choice;
+    if (userAnthropicTools) {
+      for (const t of userAnthropicTools) {
+        if (!t || !t.name) {
+          return res.status(400).json({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: "Each tool must include a 'name'",
+            },
+          });
+        }
+      }
     }
 
     const userId = req.auth!.user.id;
     const apiKeyId = req.auth!.apiKeyId ?? null;
 
-    // Worst-case credit reservation (mirror /api/chat).
+    // Worst-case credit reservation (single round, mirrors openai-compat).
     const inputTokensEstimate = approxTokens(
       messages.map((m) => m.content ?? "").join("\n"),
     );
@@ -216,6 +218,21 @@ export function registerAnthropicCompatRoutes(app: Express): void {
     let outputText = "";
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
+
+    // Tool-call accumulator drives both the streaming SSE blocks and the
+    // final non-streaming `content` array.
+    const toolCallsByIndex: AssembledToolCall[] = [];
+    let sawAnyToolCall = false;
+    const accumulateToolCallChunk = (chunk: ModelToolCallChunk) => {
+      sawAnyToolCall = true;
+      const slot = chunk.index;
+      if (!toolCallsByIndex[slot]) {
+        toolCallsByIndex[slot] = { id: "", name: "", arguments: "" };
+      }
+      if (chunk.id) toolCallsByIndex[slot].id = chunk.id;
+      if (chunk.name) toolCallsByIndex[slot].name = chunk.name;
+      if (chunk.argsDelta) toolCallsByIndex[slot].arguments += chunk.argsDelta;
+    };
 
     // ----- Streaming path: Anthropic SSE event format -----
     if (wantStream) {
@@ -244,25 +261,52 @@ export function registerAnthropicCompatRoutes(app: Express): void {
           usage: { input_tokens: inputTokensEstimate, output_tokens: 0 },
         },
       });
-      sendEvent("content_block_start", {
-        type: "content_block_start",
-        index: 0,
-        content_block: { type: "text", text: "" },
-      });
+
+      // We allocate Anthropic content_block indices on the fly:
+      //   - The first text delta opens block 0 (type:text).
+      //   - Each new tool-call slot gets the next index, AFTER closing any
+      //     currently open text block.
+      //   - If text starts again later, a new text block is opened.
+      // This matches Anthropic's wire format exactly so SDKs can iterate.
+      let nextBlockIndex = 0;
+      let openTextBlockIndex: number | null = null;
+      const slotToBlockIndex = new Map<number, number>();
+      const openBlockIndices = new Set<number>();
+
+      const closeBlock = (idx: number) => {
+        sendEvent("content_block_stop", {
+          type: "content_block_stop",
+          index: idx,
+        });
+        openBlockIndices.delete(idx);
+      };
+      const closeOpenTextBlock = () => {
+        if (openTextBlockIndex !== null) {
+          closeBlock(openTextBlockIndex);
+          openTextBlockIndex = null;
+        }
+      };
 
       const ctx: StreamCtx = {
         onText(delta) {
           if (!delta) return;
           if (!firstTokenMs) firstTokenMs = Date.now() - startTime;
           outputText += delta;
+          if (openTextBlockIndex === null) {
+            openTextBlockIndex = nextBlockIndex++;
+            openBlockIndices.add(openTextBlockIndex);
+            sendEvent("content_block_start", {
+              type: "content_block_start",
+              index: openTextBlockIndex,
+              content_block: { type: "text", text: "" },
+            });
+          }
           sendEvent("content_block_delta", {
             type: "content_block_delta",
-            index: 0,
+            index: openTextBlockIndex,
             delta: { type: "text_delta", text: delta },
           });
         },
-        // Tool callbacks are unused by the compat path (we don't enable tools
-        // here), but the interface requires them — just no-op.
         onToolStart() {},
         onToolEnd() {},
         onToolError() {},
@@ -270,43 +314,58 @@ export function registerAnthropicCompatRoutes(app: Express): void {
           totalInputTokens += inT;
           totalOutputTokens += outT;
         },
+        onModelToolCallChunk(chunk) {
+          if (!firstTokenMs) firstTokenMs = Date.now() - startTime;
+          accumulateToolCallChunk(chunk);
+
+          let blockIdx = slotToBlockIndex.get(chunk.index);
+          if (blockIdx === undefined) {
+            // First chunk for this slot: close any open text block, then open
+            // a new tool_use content block at the next index.
+            closeOpenTextBlock();
+            blockIdx = nextBlockIndex++;
+            slotToBlockIndex.set(chunk.index, blockIdx);
+            openBlockIndices.add(blockIdx);
+            sendEvent("content_block_start", {
+              type: "content_block_start",
+              index: blockIdx,
+              content_block: {
+                type: "tool_use",
+                id: chunk.id ?? toolCallsByIndex[chunk.index]?.id ?? "",
+                name: chunk.name ?? toolCallsByIndex[chunk.index]?.name ?? "",
+                input: {},
+              },
+            });
+          }
+          if (chunk.argsDelta) {
+            sendEvent("content_block_delta", {
+              type: "content_block_delta",
+              index: blockIdx,
+              delta: {
+                type: "input_json_delta",
+                partial_json: chunk.argsDelta,
+              },
+            });
+          }
+        },
       };
 
       let success = false;
       let errorMessage = "";
-      let stopReason: "end_turn" | "max_tokens" | "error" = "end_turn";
+      let stopReason: "end_turn" | "max_tokens" | "tool_use" | "error" = "end_turn";
       try {
-        if (catalogId in openAIMap) {
-          await runOpenAI({
-            model: openAIMap[catalogId],
-            messages,
-            temperature: body.temperature,
-            maxTokens: effectiveMaxTokens,
-            useTools: false,
-            ctx,
-          });
-        } else if (catalogId in anthropicMap) {
-          await runAnthropic({
-            model: anthropicMap[catalogId],
-            messages,
-            temperature: body.temperature,
-            maxTokens: effectiveMaxTokens,
-            useTools: false,
-            ctx,
-          });
-        } else {
-          await runGemini({
-            model: geminiMap[catalogId],
-            messages,
-            temperature: body.temperature,
-            maxTokens: effectiveMaxTokens,
-            useTools: false,
-            ctx,
-          });
-        }
+        await dispatchToRunner({
+          catalogId,
+          messages,
+          temperature: body.temperature,
+          maxTokens: effectiveMaxTokens,
+          ctx,
+          userAnthropicTools,
+          userAnthropicToolChoice,
+        });
         success = true;
-        // Approx — we can't always get true finish reason from runners.
-        if (totalOutputTokens >= effectiveMaxTokens) stopReason = "max_tokens";
+        if (sawAnyToolCall) stopReason = "tool_use";
+        else if (totalOutputTokens >= effectiveMaxTokens) stopReason = "max_tokens";
       } catch (err) {
         errorMessage = err instanceof Error ? err.message : "Request failed";
         stopReason = "error";
@@ -333,11 +392,17 @@ export function registerAnthropicCompatRoutes(app: Express): void {
         );
       }
 
-      // Close the content block, then emit message_delta + message_stop.
-      sendEvent("content_block_stop", {
-        type: "content_block_stop",
-        index: 0,
-      });
+      // Close every block that's still open (text or tool_use) before the
+      // terminating message_delta / message_stop. SDKs reject streams that
+      // end with an unclosed content_block.
+      for (const idx of Array.from(openBlockIndices).sort((a, b) => a - b)) {
+        sendEvent("content_block_stop", {
+          type: "content_block_stop",
+          index: idx,
+        });
+      }
+      openBlockIndices.clear();
+
       if (!success) {
         sendEvent("error", {
           type: "error",
@@ -368,7 +433,7 @@ export function registerAnthropicCompatRoutes(app: Express): void {
       return;
     }
 
-    // ----- Non-streaming path: collect full text, return Anthropic message -----
+    // ----- Non-streaming path: collect full text + tool calls -----
     const ctx: StreamCtx = {
       onText(delta) {
         if (!delta) return;
@@ -382,39 +447,24 @@ export function registerAnthropicCompatRoutes(app: Express): void {
         totalInputTokens += inT;
         totalOutputTokens += outT;
       },
+      onModelToolCallChunk(chunk) {
+        if (!firstTokenMs) firstTokenMs = Date.now() - startTime;
+        accumulateToolCallChunk(chunk);
+      },
     };
 
     let success = false;
     let errorMessage = "";
     try {
-      if (catalogId in openAIMap) {
-        await runOpenAI({
-          model: openAIMap[catalogId],
-          messages,
-          temperature: body.temperature,
-          maxTokens: effectiveMaxTokens,
-          useTools: false,
-          ctx,
-        });
-      } else if (catalogId in anthropicMap) {
-        await runAnthropic({
-          model: anthropicMap[catalogId],
-          messages,
-          temperature: body.temperature,
-          maxTokens: effectiveMaxTokens,
-          useTools: false,
-          ctx,
-        });
-      } else {
-        await runGemini({
-          model: geminiMap[catalogId],
-          messages,
-          temperature: body.temperature,
-          maxTokens: effectiveMaxTokens,
-          useTools: false,
-          ctx,
-        });
-      }
+      await dispatchToRunner({
+        catalogId,
+        messages,
+        temperature: body.temperature,
+        maxTokens: effectiveMaxTokens,
+        ctx,
+        userAnthropicTools,
+        userAnthropicToolChoice,
+      });
       success = true;
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : "Request failed";
@@ -461,14 +511,41 @@ export function registerAnthropicCompatRoutes(app: Express): void {
       });
     }
 
-    const stopReason: "end_turn" | "max_tokens" =
-      totalOutputTokens >= effectiveMaxTokens ? "max_tokens" : "end_turn";
+    // Build the content array. Order: text first, then tool_use blocks.
+    // The Anthropic native ordering can interleave them, but for the
+    // collected non-streaming response that order is lost — text-first is
+    // the convention SDKs handle correctly.
+    const content: any[] = [];
+    if (outputText) content.push({ type: "text", text: outputText });
+    if (sawAnyToolCall) {
+      for (const t of toolCallsByIndex) {
+        if (!t || !t.name) continue;
+        let parsedInput: any = {};
+        try {
+          parsedInput = t.arguments ? JSON.parse(t.arguments) : {};
+        } catch {
+          parsedInput = {};
+        }
+        content.push({
+          type: "tool_use",
+          id: t.id,
+          name: t.name,
+          input: parsedInput,
+        });
+      }
+    }
+
+    const stopReason: "end_turn" | "max_tokens" | "tool_use" = sawAnyToolCall
+      ? "tool_use"
+      : totalOutputTokens >= effectiveMaxTokens
+        ? "max_tokens"
+        : "end_turn";
 
     return res.json({
       id: messageId,
       type: "message",
       role: "assistant",
-      content: [{ type: "text", text: outputText }],
+      content: content.length > 0 ? content : [{ type: "text", text: "" }],
       model: body.model,
       stop_reason: stopReason,
       stop_sequence: null,
@@ -484,4 +561,75 @@ export function registerAnthropicCompatRoutes(app: Express): void {
   // (so SDKs that hit the host root work too).
   app.post("/api/v1/messages", requireApiKeyAnthropic, handler);
   app.post("/v1/messages", requireApiKeyAnthropic, handler);
+}
+
+// ---------------------------------------------------------------------------
+// Runner dispatch with cross-family translation
+// ---------------------------------------------------------------------------
+
+async function dispatchToRunner(args: {
+  catalogId: string;
+  messages: ChatMessage[];
+  temperature?: number;
+  maxTokens: number;
+  ctx: StreamCtx;
+  userAnthropicTools?: AnthropicToolDef[];
+  userAnthropicToolChoice?: AnthropicToolChoice;
+}): Promise<void> {
+  const {
+    catalogId,
+    messages,
+    temperature,
+    maxTokens,
+    ctx,
+    userAnthropicTools,
+    userAnthropicToolChoice,
+  } = args;
+
+  if (catalogId in anthropicMap) {
+    await runAnthropic({
+      model: anthropicMap[catalogId],
+      messages,
+      temperature,
+      maxTokens,
+      useTools: false,
+      ctx,
+      ...(userAnthropicTools
+        ? {
+            userTools: userAnthropicTools,
+            userToolChoice: userAnthropicToolChoice,
+          }
+        : {}),
+    });
+  } else if (catalogId in openAIMap) {
+    await runOpenAI({
+      model: openAIMap[catalogId],
+      messages,
+      temperature,
+      maxTokens,
+      useTools: false,
+      ctx,
+      ...(userAnthropicTools
+        ? {
+            userTools: anthropicToOpenaiTools(userAnthropicTools),
+            userToolChoice: anthropicToOpenaiToolChoice(userAnthropicToolChoice),
+          }
+        : {}),
+    });
+  } else {
+    await runGemini({
+      model: geminiMap[catalogId],
+      messages,
+      temperature,
+      maxTokens,
+      useTools: false,
+      ctx,
+      ...(userAnthropicTools
+        ? {
+            userTools: anthropicToGeminiTools(userAnthropicTools),
+            userToolChoice: anthropicToGeminiToolChoice(userAnthropicToolChoice),
+          }
+        : {}),
+    });
+  }
 }

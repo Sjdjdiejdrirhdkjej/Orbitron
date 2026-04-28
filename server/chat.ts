@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { randomBytes } from "node:crypto";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
@@ -74,9 +75,20 @@ export const geminiMap: Record<string, string> = {
   "gemini-2.0-flash-thinking": "gemini-2.0-flash-thinking",
 };
 
+export interface ToolCallSpec {
+  id: string;
+  name: string;
+  /** JSON-encoded arguments string, OpenAI-style. */
+  arguments: string;
+}
+
 export interface ChatMessage {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
+  /** Set on assistant turns that asked the caller to invoke tool(s). */
+  tool_calls?: ToolCallSpec[];
+  /** Set on `tool` role turns that carry a tool result back to the model. */
+  tool_call_id?: string;
 }
 
 interface ChatBody {
@@ -107,10 +119,25 @@ export function approxTokens(text: string): number {
 }
 
 /**
- * The streaming context passed into each provider runner. Each runner forwards
- * text deltas via `onText` and tool lifecycle events via `onTool*`. The route
- * handler turns those into SSE events.
+ * One incremental update to a *user-defined* tool call the model wants the
+ * caller (not Orbitron) to execute. OpenAI streams these as tool_call deltas
+ * with `index/id/name/arguments` arriving across multiple chunks. Anthropic
+ * delivers them as `content_block_start` (id+name) followed by
+ * `input_json_delta` chunks. Gemini delivers them whole at the end. We
+ * normalize all three into a single chunk shape so compat endpoints can
+ * forward them in their native streaming format.
  */
+export interface ModelToolCallChunk {
+  /** Stable tool-call slot index (0, 1, 2, …) within this response. */
+  index: number;
+  /** Provider-issued call id. Present on the first chunk for a given index. */
+  id?: string;
+  /** Function name. Present on the first chunk for a given index. */
+  name?: string;
+  /** Partial JSON arguments fragment to be concatenated, OpenAI-style. */
+  argsDelta?: string;
+}
+
 export interface StreamCtx {
   onText(delta: string): void;
   onToolStart(callId: string, name: string, args: Record<string, unknown>): void;
@@ -124,6 +151,13 @@ export interface StreamCtx {
    * loops and burn provider quota that's never charged back to credits.
    */
   onRoundComplete(inputTokens: number, outputTokens: number): void;
+  /**
+   * Optional. Called whenever the model emits a chunk for a *user-defined*
+   * tool call (i.e. one the caller — not Orbitron — must execute). Only set
+   * on the compat surfaces; the native /api/chat loop doesn't use this
+   * because it executes its own built-in tools.
+   */
+  onModelToolCallChunk?(chunk: ModelToolCallChunk): void;
 }
 
 /**
@@ -176,18 +210,43 @@ export async function runOpenAI(opts: {
   useTools: boolean;
   reasoningLevel?: "low" | "medium" | "high";
   ctx: StreamCtx;
+  /**
+   * User-supplied tools, already in OpenAI's native function-tool shape.
+   * When present, this runner does a single round (no internal tool loop)
+   * and surfaces any tool_calls the model emits via ctx.onModelToolCallChunk
+   * — execution is the caller's responsibility.
+   */
+  userTools?: any[];
+  userToolChoice?: any;
 }): Promise<void> {
   const isReasoning = opts.model.startsWith("gpt-5") || opts.model.startsWith("o");
   const reasoningEffort = isReasoning ? (opts.reasoningLevel ?? "medium") : undefined;
+  const passthroughTools = !!opts.userTools && opts.userTools.length > 0;
 
   // OpenAI keeps the full conversation as an array we mutate across rounds.
-  const messages: any[] = opts.messages.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  // Preserve any tool_calls (assistant) and tool_call_id (tool role) that
+  // the caller passed through — those are how multi-turn tool use is
+  // continued across separate API calls.
+  const messages: any[] = opts.messages.map((m) => {
+    const out: any = { role: m.role, content: m.content };
+    if (m.tool_calls && m.tool_calls.length > 0) {
+      out.tool_calls = m.tool_calls.map((tc) => ({
+        id: tc.id,
+        type: "function",
+        function: { name: tc.name, arguments: tc.arguments },
+      }));
+      // OpenAI rejects assistant tool_call turns whose content is "" — null
+      // is the correct sentinel for "tool-call-only assistant turn".
+      if (!m.content) out.content = null;
+    }
+    if (m.tool_call_id) out.tool_call_id = m.tool_call_id;
+    return out;
+  });
 
-  // Inject the tools system hint when tools are enabled.
-  if (opts.useTools) {
+  // Inject the tools system hint when Orbitron's built-in tools are enabled.
+  // Skip when the caller is doing their own tool-passthrough — their prompt
+  // and tool defs are theirs to own.
+  if (opts.useTools && !passthroughTools) {
     const sysIdx = messages.findIndex((m) => m.role === "system");
     if (sysIdx >= 0) {
       messages[sysIdx] = {
@@ -199,7 +258,10 @@ export async function runOpenAI(opts: {
     }
   }
 
-  for (let iter = 0; iter < MAX_TOOL_ITERATIONS + 1; iter++) {
+  // Pass-through mode is single-shot — no internal tool execution loop.
+  const iterCap = passthroughTools ? 1 : MAX_TOOL_ITERATIONS + 1;
+
+  for (let iter = 0; iter < iterCap; iter++) {
     // Snapshot the input tokens billed for THIS provider round before we
     // mutate `messages` with the assistant + tool turns. Without this, tool
     // iterations re-feed the growing transcript at no extra charge.
@@ -216,9 +278,11 @@ export async function runOpenAI(opts: {
       ...(isReasoning ? {} : { temperature: opts.temperature ?? 0.7 }),
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       max_completion_tokens: opts.maxTokens ?? 4096,
-      ...(opts.useTools && iter < MAX_TOOL_ITERATIONS
-        ? { tools: [WEB_SEARCH_OPENAI_TOOL] }
-        : {}),
+      ...(passthroughTools
+        ? { tools: opts.userTools, ...(opts.userToolChoice ? { tool_choice: opts.userToolChoice } : {}) }
+        : opts.useTools && iter < MAX_TOOL_ITERATIONS
+          ? { tools: [WEB_SEARCH_OPENAI_TOOL] }
+          : {}),
     } as any);
 
     let assistantText = "";
@@ -245,6 +309,16 @@ export async function runOpenAI(opts: {
           if (tc.function?.arguments) {
             toolCalls[idx].function.arguments += tc.function.arguments;
           }
+          // Pass-through mode: forward each tool_call delta to the compat
+          // layer in normalized form so it can re-emit OpenAI/Anthropic SSE.
+          if (passthroughTools && opts.ctx.onModelToolCallChunk) {
+            opts.ctx.onModelToolCallChunk({
+              index: idx,
+              id: tc.id,
+              name: tc.function?.name,
+              argsDelta: tc.function?.arguments,
+            });
+          }
         }
       }
     }
@@ -258,6 +332,9 @@ export async function runOpenAI(opts: {
         ? approxTokens(JSON.stringify(completedToolCalls))
         : 0);
     opts.ctx.onRoundComplete(roundInputTokens, roundOutputTokens);
+
+    // Pass-through mode never auto-executes tool calls — caller does that.
+    if (passthroughTools) return;
 
     if (completedToolCalls.length === 0) return; // model finished
 
@@ -304,29 +381,85 @@ export async function runAnthropic(opts: {
   maxTokens?: number;
   useTools: boolean;
   ctx: StreamCtx;
+  /**
+   * User-supplied tools, already in Anthropic's native shape
+   * `{ name, description, input_schema }`. When present, this runner does a
+   * single round (no internal tool loop) and surfaces any tool_use blocks
+   * via ctx.onModelToolCallChunk for the caller to execute.
+   */
+  userTools?: any[];
+  userToolChoice?: any;
 }): Promise<void> {
   const supportsTemperature = !/^claude-opus-4-(6|7)$|^claude-sonnet-4-6$/.test(
     opts.model,
   );
+  const passthroughTools = !!opts.userTools && opts.userTools.length > 0;
 
   let systemMessages = opts.messages
     .filter((m) => m.role === "system")
     .map((m) => m.content)
     .join("\n\n");
-  if (opts.useTools) {
+  if (opts.useTools && !passthroughTools) {
     systemMessages = systemMessages
       ? `${systemMessages}\n\n${TOOLS_SYSTEM_HINT}`
       : TOOLS_SYSTEM_HINT;
   }
 
-  const turns: any[] = opts.messages
-    .filter((m) => m.role !== "system")
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
+  // Build Anthropic native turns. Two structural rewrites needed:
+  //   - Assistant turns with tool_calls become a single assistant turn whose
+  //     content is an array of [text?, tool_use, tool_use, …] blocks.
+  //   - One or more consecutive `tool` role messages collapse into a single
+  //     user turn whose content is an array of tool_result blocks.
+  const turns: any[] = [];
+  let pendingToolResults: any[] = [];
+  const flushPendingResults = () => {
+    if (pendingToolResults.length > 0) {
+      turns.push({ role: "user", content: pendingToolResults });
+      pendingToolResults = [];
+    }
+  };
+  for (const m of opts.messages) {
+    if (m.role === "system") continue;
+    if (m.role === "tool") {
+      pendingToolResults.push({
+        type: "tool_result",
+        tool_use_id: m.tool_call_id ?? "",
+        content: m.content,
+      });
+      continue;
+    }
+    flushPendingResults();
+    if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+      const blocks: any[] = [];
+      if (m.content) blocks.push({ type: "text", text: m.content });
+      for (const tc of m.tool_calls) {
+        let parsedInput: Record<string, unknown> = {};
+        try {
+          parsedInput = tc.arguments ? JSON.parse(tc.arguments) : {};
+        } catch {
+          parsedInput = {};
+        }
+        blocks.push({
+          type: "tool_use",
+          id: tc.id,
+          name: tc.name,
+          input: parsedInput,
+        });
+      }
+      turns.push({ role: "assistant", content: blocks });
+    } else {
+      turns.push({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      });
+    }
+  }
+  flushPendingResults();
 
-  for (let iter = 0; iter < MAX_TOOL_ITERATIONS + 1; iter++) {
+  // Pass-through mode is single-shot.
+  const iterCap = passthroughTools ? 1 : MAX_TOOL_ITERATIONS + 1;
+
+  for (let iter = 0; iter < iterCap; iter++) {
     // Snapshot input tokens for THIS round (system prompt + entire transcript
     // so far) before the assistant + tool turns get appended. Anthropic's
     // usage object on finalMsg would be more accurate, but the proxy doesn't
@@ -347,12 +480,23 @@ export async function runAnthropic(opts: {
       ...(supportsTemperature ? { temperature: opts.temperature ?? 0.7 } : {}),
       system: systemMessages || undefined,
       messages: turns,
-      ...(opts.useTools && iter < MAX_TOOL_ITERATIONS
-        ? { tools: [WEB_SEARCH_ANTHROPIC_TOOL] }
-        : {}),
+      ...(passthroughTools
+        ? {
+            tools: opts.userTools,
+            ...(opts.userToolChoice ? { tool_choice: opts.userToolChoice } : {}),
+          }
+        : opts.useTools && iter < MAX_TOOL_ITERATIONS
+          ? { tools: [WEB_SEARCH_ANTHROPIC_TOOL] }
+          : {}),
     } as any);
 
     let assistantText = "";
+    // Map Anthropic content-block-index → caller-visible tool-call slot.
+    // Anthropic intermixes text and tool_use blocks under one growing index;
+    // the compat layer wants a flat 0…N tool-call slot the caller can match
+    // on (mirrors OpenAI's tool_calls[].index semantics).
+    const blockIdxToToolSlot = new Map<number, number>();
+    let nextToolSlot = 0;
     for await (const event of stream as any) {
       if (
         event.type === "content_block_delta" &&
@@ -361,6 +505,30 @@ export async function runAnthropic(opts: {
         const t = event.delta.text || "";
         assistantText += t;
         opts.ctx.onText(t);
+      } else if (
+        passthroughTools &&
+        event.type === "content_block_start" &&
+        event.content_block?.type === "tool_use"
+      ) {
+        const slot = nextToolSlot++;
+        blockIdxToToolSlot.set(event.index, slot);
+        opts.ctx.onModelToolCallChunk?.({
+          index: slot,
+          id: event.content_block.id,
+          name: event.content_block.name,
+        });
+      } else if (
+        passthroughTools &&
+        event.type === "content_block_delta" &&
+        event.delta?.type === "input_json_delta"
+      ) {
+        const slot = blockIdxToToolSlot.get(event.index);
+        if (slot !== undefined && event.delta.partial_json) {
+          opts.ctx.onModelToolCallChunk?.({
+            index: slot,
+            argsDelta: event.delta.partial_json,
+          });
+        }
       }
     }
 
@@ -372,6 +540,9 @@ export async function runAnthropic(opts: {
       approxTokens(assistantText) +
       (toolUses.length > 0 ? approxTokens(JSON.stringify(toolUses)) : 0);
     opts.ctx.onRoundComplete(roundInputTokens, roundOutputTokens);
+
+    // Pass-through mode never auto-executes — caller will do that.
+    if (passthroughTools) return;
 
     if (finalMsg.stop_reason !== "tool_use" || toolUses.length === 0) return;
 
@@ -409,31 +580,88 @@ export async function runGemini(opts: {
   maxTokens?: number;
   useTools: boolean;
   ctx: StreamCtx;
+  /**
+   * User-supplied tools, already in Gemini's native shape (an array of
+   * `{ functionDeclarations: [...] }`). When present, this runner does a
+   * single round and surfaces functionCall parts via ctx.onModelToolCallChunk.
+   */
+  userTools?: any[];
+  /**
+   * Native Gemini `toolConfig` (e.g. `{ functionCallingConfig: { mode } }`).
+   */
+  userToolChoice?: any;
 }): Promise<void> {
+  const passthroughTools = !!opts.userTools && opts.userTools.length > 0;
+
   let systemMessages = opts.messages
     .filter((m) => m.role === "system")
     .map((m) => m.content)
     .join("\n\n");
-  if (opts.useTools) {
+  if (opts.useTools && !passthroughTools) {
     systemMessages = systemMessages
       ? `${systemMessages}\n\n${TOOLS_SYSTEM_HINT}`
       : TOOLS_SYSTEM_HINT;
   }
 
-  const contents: any[] = opts.messages
-    .filter((m) => m.role !== "system")
-    .map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+  // Build Gemini native contents. Translate tool_calls (assistant) and
+  // tool role messages (function results) into functionCall / functionResponse
+  // parts. Look up tool names from preceding assistant tool_calls so each
+  // functionResponse carries the right `name` (Gemini requires it; the
+  // OpenAI / Anthropic compat shape often only ships back tool_call_id).
+  const callIdToName = new Map<string, string>();
+  const contents: any[] = [];
+  let pendingFnResponses: any[] = [];
+  const flushFnResponses = () => {
+    if (pendingFnResponses.length > 0) {
+      contents.push({ role: "user", parts: pendingFnResponses });
+      pendingFnResponses = [];
+    }
+  };
+  for (const m of opts.messages) {
+    if (m.role === "system") continue;
+    if (m.role === "tool") {
+      const name = callIdToName.get(m.tool_call_id ?? "") ?? "tool";
+      pendingFnResponses.push({
+        functionResponse: { name, response: { content: m.content } },
+      });
+      continue;
+    }
+    flushFnResponses();
+    if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+      const parts: any[] = [];
+      if (m.content) parts.push({ text: m.content });
+      for (const tc of m.tool_calls) {
+        let parsedArgs: Record<string, unknown> = {};
+        try {
+          parsedArgs = tc.arguments ? JSON.parse(tc.arguments) : {};
+        } catch {
+          parsedArgs = {};
+        }
+        parts.push({ functionCall: { name: tc.name, args: parsedArgs } });
+        callIdToName.set(tc.id, tc.name);
+      }
+      contents.push({ role: "model", parts });
+    } else {
+      contents.push({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      });
+    }
+  }
+  flushFnResponses();
 
-  for (let iter = 0; iter < MAX_TOOL_ITERATIONS + 1; iter++) {
+  const iterCap = passthroughTools ? 1 : MAX_TOOL_ITERATIONS + 1;
+
+  for (let iter = 0; iter < iterCap; iter++) {
     const config: Record<string, unknown> = {
       temperature: opts.temperature ?? 0.7,
       maxOutputTokens: opts.maxTokens ?? 4096,
     };
     if (systemMessages) config.systemInstruction = systemMessages;
-    if (opts.useTools && iter < MAX_TOOL_ITERATIONS) {
+    if (passthroughTools) {
+      config.tools = opts.userTools;
+      if (opts.userToolChoice) config.toolConfig = opts.userToolChoice;
+    } else if (opts.useTools && iter < MAX_TOOL_ITERATIONS) {
       config.tools = [WEB_SEARCH_GEMINI_TOOL];
     }
 
@@ -465,11 +693,30 @@ export async function runGemini(opts: {
       const parts = chunk.candidates?.[0]?.content?.parts ?? [];
       for (const part of parts) {
         if (part.functionCall?.name) {
+          const args = (part.functionCall.args || {}) as Record<string, unknown>;
+          // Synthesize an id when Gemini omits one — both OpenAI and
+          // Anthropic require an id on every tool call so callers can
+          // correlate the eventual tool result back to the right call.
+          const id = part.functionCall.id ?? `call_${randomBytes(8).toString("hex")}`;
           functionCalls.push({
             name: part.functionCall.name,
-            args: (part.functionCall.args || {}) as Record<string, unknown>,
-            id: part.functionCall.id,
+            args,
+            id,
           });
+          // Pass-through: emit a single complete chunk per tool call. Gemini
+          // doesn't deliver functionCall args incrementally, so we ship the
+          // whole JSON in one argsDelta — the compat layer can either re-emit
+          // it as a single OpenAI tool_call delta or as a single Anthropic
+          // input_json_delta. Both are valid streaming shapes for those APIs.
+          if (passthroughTools && opts.ctx.onModelToolCallChunk) {
+            const slot = functionCalls.length - 1;
+            opts.ctx.onModelToolCallChunk({
+              index: slot,
+              id,
+              name: part.functionCall.name,
+              argsDelta: JSON.stringify(args),
+            });
+          }
         }
       }
     }
@@ -478,6 +725,9 @@ export async function runGemini(opts: {
       approxTokens(assistantText) +
       (functionCalls.length > 0 ? approxTokens(JSON.stringify(functionCalls)) : 0);
     opts.ctx.onRoundComplete(roundInputTokens, roundOutputTokens);
+
+    // Pass-through mode never auto-executes — caller does.
+    if (passthroughTools) return;
 
     if (functionCalls.length === 0) return;
 

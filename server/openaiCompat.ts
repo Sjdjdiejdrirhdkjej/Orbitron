@@ -20,34 +20,40 @@ import {
   MAX_MESSAGES_PER_REQUEST,
   type ChatMessage,
   type StreamCtx,
+  type ModelToolCallChunk,
 } from "./chat";
+import {
+  openaiCompatMessagesToChat,
+  openaiToAnthropicTools,
+  openaiToGeminiTools,
+  openaiToAnthropicToolChoice,
+  openaiToGeminiToolChoice,
+  type OpenAICompatMessage,
+  type OpenAIToolDef,
+  type OpenAIToolChoice,
+} from "./compatTools";
 
 // ---------------------------------------------------------------------------
 // OpenAI chat.completions request types (subset we accept)
 // ---------------------------------------------------------------------------
 
-type OpenAITextPart = { type: "text"; text: string };
-type OpenAIContentPart = OpenAITextPart | { type: string; [k: string]: unknown };
-
-interface OpenAIMessageIn {
-  role: "system" | "user" | "assistant" | "developer" | "tool";
-  content: string | OpenAIContentPart[] | null;
-  name?: string;
-}
-
 interface OpenAIChatBody {
   model?: string;
-  messages?: OpenAIMessageIn[];
+  messages?: OpenAICompatMessage[];
   max_tokens?: number;
   /** Newer alias used by the GPT-5 / o-series SDKs. */
   max_completion_tokens?: number;
   temperature?: number;
   stream?: boolean;
   /**
-   * GPT-5 / o-series reasoning effort. We pass it through to the OpenAI runner
-   * so reasoning models behave the same when called through the compat surface.
+   * GPT-5 / o-series reasoning effort. Passed through to the OpenAI runner so
+   * reasoning models behave the same when called through the compat surface.
    */
   reasoning_effort?: "low" | "medium" | "high";
+  /** Function tool definitions (OpenAI native shape). */
+  tools?: OpenAIToolDef[];
+  /** OpenAI-native tool_choice. */
+  tool_choice?: OpenAIToolChoice;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,30 +83,19 @@ function resolveCatalogId(modelParam: string): string | null {
   return null;
 }
 
-function flattenContent(content: string | OpenAIContentPart[] | null): string {
-  if (content == null) return "";
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((p) => {
-      if (
-        p &&
-        typeof p === "object" &&
-        p.type === "text" &&
-        typeof (p as OpenAITextPart).text === "string"
-      ) {
-        return (p as OpenAITextPart).text;
-      }
-      // Drop image_url / input_audio / etc — vision/audio passthrough is not
-      // supported on the compat surface yet.
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
 function newCompletionId(): string {
   return `chatcmpl-${randomBytes(12).toString("base64url")}`;
+}
+
+/**
+ * One assembled tool call ready for the non-streaming response body. We
+ * accumulate these from `onModelToolCallChunk` events and emit them either
+ * inline in the assistant message (non-streaming) or as streaming deltas.
+ */
+interface AssembledToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,25 +183,13 @@ export function registerOpenAICompatRoutes(app: Express): void {
     );
 
     // Translate OpenAI-shape input into the runner's flat ChatMessage[].
-    // - "developer" role (newer OpenAI convention) is folded into "system".
-    // - "tool" role is dropped (tool passthrough not supported here).
-    const messages: ChatMessage[] = [];
-    for (const m of body.messages) {
-      if (!m) continue;
-      const role =
-        m.role === "developer"
-          ? "system"
-          : m.role === "system" || m.role === "user" || m.role === "assistant"
-            ? m.role
-            : null;
-      if (!role) continue;
-      const text = flattenContent(m.content);
-      messages.push({ role, content: text });
-    }
+    // The helper preserves assistant `tool_calls` and `tool_call_id` on tool
+    // results so multi-turn function calling works through this surface.
+    const messages: ChatMessage[] = openaiCompatMessagesToChat(body.messages);
     if (messages.length === 0) {
       return res.status(400).json({
         error: {
-          message: "'messages' had no usable text content",
+          message: "'messages' had no usable content",
           type: "invalid_request_error",
           param: "messages",
           code: null,
@@ -214,10 +197,32 @@ export function registerOpenAICompatRoutes(app: Express): void {
       });
     }
 
+    // Validate tools/tool_choice early. We ignore an empty tools array and
+    // an undefined tool_choice — the request runs as a normal chat.
+    const userOpenaiTools: OpenAIToolDef[] | undefined =
+      Array.isArray(body.tools) && body.tools.length > 0 ? body.tools : undefined;
+    const userOpenaiToolChoice = body.tool_choice;
+    if (userOpenaiTools) {
+      for (const t of userOpenaiTools) {
+        if (!t || t.type !== "function" || !t.function?.name) {
+          return res.status(400).json({
+            error: {
+              message:
+                "Each tool must be of type 'function' with a function.name",
+              type: "invalid_request_error",
+              param: "tools",
+              code: null,
+            },
+          });
+        }
+      }
+    }
+
     const userId = req.auth!.user.id;
     const apiKeyId = req.auth!.apiKeyId ?? null;
 
-    // Worst-case credit reservation — identical math to /api/chat.
+    // Worst-case credit reservation — identical math to /api/chat. Tools
+    // pass-through is single-round so no multiplier is needed.
     const inputTokensEstimate = approxTokens(
       messages.map((m) => m.content ?? "").join("\n"),
     );
@@ -248,6 +253,22 @@ export function registerOpenAICompatRoutes(app: Express): void {
     let outputText = "";
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
+
+    // Assemble per-index tool calls as the runner streams them. Drives both
+    // the streaming `delta.tool_calls` chunks AND the final non-streaming
+    // `message.tool_calls` payload.
+    const toolCallsByIndex: AssembledToolCall[] = [];
+    let sawAnyToolCall = false;
+    const accumulateToolCallChunk = (chunk: ModelToolCallChunk) => {
+      sawAnyToolCall = true;
+      const slot = chunk.index;
+      if (!toolCallsByIndex[slot]) {
+        toolCallsByIndex[slot] = { id: "", name: "", arguments: "" };
+      }
+      if (chunk.id) toolCallsByIndex[slot].id = chunk.id;
+      if (chunk.name) toolCallsByIndex[slot].name = chunk.name;
+      if (chunk.argsDelta) toolCallsByIndex[slot].arguments += chunk.argsDelta;
+    };
 
     // ----- Streaming path: OpenAI SSE chunk format -----
     if (wantStream) {
@@ -294,40 +315,50 @@ export function registerOpenAICompatRoutes(app: Express): void {
           totalInputTokens += inT;
           totalOutputTokens += outT;
         },
+        onModelToolCallChunk(chunk) {
+          if (!firstTokenMs) firstTokenMs = Date.now() - startTime;
+          accumulateToolCallChunk(chunk);
+          // Emit the chunk as an OpenAI tool_call delta. The OpenAI SDK
+          // accumulates id/name/arguments across deltas for the same index.
+          const deltaToolCall: any = { index: chunk.index };
+          if (chunk.id) {
+            deltaToolCall.id = chunk.id;
+            deltaToolCall.type = "function";
+          }
+          if (chunk.name || chunk.argsDelta) {
+            deltaToolCall.function = {};
+            if (chunk.name) deltaToolCall.function.name = chunk.name;
+            if (chunk.argsDelta) deltaToolCall.function.arguments = chunk.argsDelta;
+          }
+          sendChunk({
+            id: completionId,
+            object: "chat.completion.chunk",
+            created,
+            model: body.model,
+            choices: [
+              {
+                index: 0,
+                delta: { tool_calls: [deltaToolCall] },
+                finish_reason: null,
+              },
+            ],
+          });
+        },
       };
 
       let success = false;
       let errorMessage = "";
       try {
-        if (catalogId in openAIMap) {
-          await runOpenAI({
-            model: openAIMap[catalogId],
-            messages,
-            temperature: body.temperature,
-            maxTokens: effectiveMaxTokens,
-            useTools: false,
-            reasoningLevel: body.reasoning_effort,
-            ctx,
-          });
-        } else if (catalogId in anthropicMap) {
-          await runAnthropic({
-            model: anthropicMap[catalogId],
-            messages,
-            temperature: body.temperature,
-            maxTokens: effectiveMaxTokens,
-            useTools: false,
-            ctx,
-          });
-        } else {
-          await runGemini({
-            model: geminiMap[catalogId],
-            messages,
-            temperature: body.temperature,
-            maxTokens: effectiveMaxTokens,
-            useTools: false,
-            ctx,
-          });
-        }
+        await dispatchToRunner({
+          catalogId,
+          messages,
+          temperature: body.temperature,
+          maxTokens: effectiveMaxTokens,
+          reasoningLevel: body.reasoning_effort,
+          ctx,
+          userOpenaiTools,
+          userOpenaiToolChoice,
+        });
         success = true;
       } catch (err) {
         errorMessage = err instanceof Error ? err.message : "Request failed";
@@ -354,8 +385,11 @@ export function registerOpenAICompatRoutes(app: Express): void {
         );
       }
 
-      const finishReason: "stop" | "length" =
-        totalOutputTokens >= effectiveMaxTokens ? "length" : "stop";
+      const finishReason: "stop" | "length" | "tool_calls" = sawAnyToolCall
+        ? "tool_calls"
+        : totalOutputTokens >= effectiveMaxTokens
+          ? "length"
+          : "stop";
 
       // Final chunk with finish_reason + usage (OpenAI sends usage on the last
       // chunk when stream_options.include_usage is true; we always send it).
@@ -404,7 +438,7 @@ export function registerOpenAICompatRoutes(app: Express): void {
       return;
     }
 
-    // ----- Non-streaming path: collect full text, return ChatCompletion -----
+    // ----- Non-streaming path: collect full text + tool calls -----
     const ctx: StreamCtx = {
       onText(delta) {
         if (!delta) return;
@@ -418,40 +452,25 @@ export function registerOpenAICompatRoutes(app: Express): void {
         totalInputTokens += inT;
         totalOutputTokens += outT;
       },
+      onModelToolCallChunk(chunk) {
+        if (!firstTokenMs) firstTokenMs = Date.now() - startTime;
+        accumulateToolCallChunk(chunk);
+      },
     };
 
     let success = false;
     let errorMessage = "";
     try {
-      if (catalogId in openAIMap) {
-        await runOpenAI({
-          model: openAIMap[catalogId],
-          messages,
-          temperature: body.temperature,
-          maxTokens: effectiveMaxTokens,
-          useTools: false,
-          reasoningLevel: body.reasoning_effort,
-          ctx,
-        });
-      } else if (catalogId in anthropicMap) {
-        await runAnthropic({
-          model: anthropicMap[catalogId],
-          messages,
-          temperature: body.temperature,
-          maxTokens: effectiveMaxTokens,
-          useTools: false,
-          ctx,
-        });
-      } else {
-        await runGemini({
-          model: geminiMap[catalogId],
-          messages,
-          temperature: body.temperature,
-          maxTokens: effectiveMaxTokens,
-          useTools: false,
-          ctx,
-        });
-      }
+      await dispatchToRunner({
+        catalogId,
+        messages,
+        temperature: body.temperature,
+        maxTokens: effectiveMaxTokens,
+        reasoningLevel: body.reasoning_effort,
+        ctx,
+        userOpenaiTools,
+        userOpenaiToolChoice,
+      });
       success = true;
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : "Request failed";
@@ -502,8 +521,27 @@ export function registerOpenAICompatRoutes(app: Express): void {
       });
     }
 
-    const finishReason: "stop" | "length" =
-      totalOutputTokens >= effectiveMaxTokens ? "length" : "stop";
+    const finishReason: "stop" | "length" | "tool_calls" = sawAnyToolCall
+      ? "tool_calls"
+      : totalOutputTokens >= effectiveMaxTokens
+        ? "length"
+        : "stop";
+
+    // Build the assistant message. When the model emitted tool calls, OpenAI
+    // convention is `content: null` alongside a populated `tool_calls` array.
+    const message: any = {
+      role: "assistant",
+      content: sawAnyToolCall && !outputText ? null : outputText,
+    };
+    if (sawAnyToolCall) {
+      message.tool_calls = toolCallsByIndex
+        .filter((t) => t && t.name)
+        .map((t) => ({
+          id: t.id,
+          type: "function",
+          function: { name: t.name, arguments: t.arguments },
+        }));
+    }
 
     return res.json({
       id: completionId,
@@ -513,7 +551,7 @@ export function registerOpenAICompatRoutes(app: Express): void {
       choices: [
         {
           index: 0,
-          message: { role: "assistant", content: outputText },
+          message,
           finish_reason: finishReason,
         },
       ],
@@ -535,4 +573,79 @@ export function registerOpenAICompatRoutes(app: Express): void {
   app.post("/api/v1/chat/completions", requireApiKey, handler);
   app.post("/v1/chat/completions", requireApiKey, handler);
   app.post("/api/chat/completions", requireApiKey, handler);
+}
+
+// ---------------------------------------------------------------------------
+// Runner dispatch
+//
+// Centralizes the per-provider dispatch including translation of OpenAI-shape
+// tool defs / tool_choice into Anthropic and Gemini native shapes when the
+// caller asked for a model from a different family.
+// ---------------------------------------------------------------------------
+
+async function dispatchToRunner(args: {
+  catalogId: string;
+  messages: ChatMessage[];
+  temperature?: number;
+  maxTokens: number;
+  reasoningLevel?: "low" | "medium" | "high";
+  ctx: StreamCtx;
+  userOpenaiTools?: OpenAIToolDef[];
+  userOpenaiToolChoice?: OpenAIToolChoice;
+}): Promise<void> {
+  const {
+    catalogId,
+    messages,
+    temperature,
+    maxTokens,
+    reasoningLevel,
+    ctx,
+    userOpenaiTools,
+    userOpenaiToolChoice,
+  } = args;
+
+  if (catalogId in openAIMap) {
+    await runOpenAI({
+      model: openAIMap[catalogId],
+      messages,
+      temperature,
+      maxTokens,
+      useTools: false,
+      reasoningLevel,
+      ctx,
+      ...(userOpenaiTools
+        ? { userTools: userOpenaiTools, userToolChoice: userOpenaiToolChoice }
+        : {}),
+    });
+  } else if (catalogId in anthropicMap) {
+    await runAnthropic({
+      model: anthropicMap[catalogId],
+      messages,
+      temperature,
+      maxTokens,
+      useTools: false,
+      ctx,
+      ...(userOpenaiTools
+        ? {
+            userTools: openaiToAnthropicTools(userOpenaiTools),
+            userToolChoice: openaiToAnthropicToolChoice(userOpenaiToolChoice),
+          }
+        : {}),
+    });
+  } else {
+    await runGemini({
+      model: geminiMap[catalogId],
+      messages,
+      temperature,
+      maxTokens,
+      useTools: false,
+      ctx,
+      ...(userOpenaiTools
+        ? {
+            userTools: openaiToGeminiTools(userOpenaiTools),
+            userToolChoice: openaiToGeminiToolChoice(userOpenaiToolChoice),
+          }
+        : {}),
+    });
+  }
 }
