@@ -60,15 +60,26 @@ export async function ensureSchema(): Promise<void> {
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
     -- Replit Auth users table. id is the OIDC subject claim (string).
+    -- Note: email is intentionally NOT UNIQUE. The auth identity is the id
+    -- column (the OIDC sub). Two distinct sub values can legitimately share
+    -- an email (e.g. a user signs in via different OIDC clients, or Apple
+    -- Hide-My-Email returns a relay we have already seen). Enforcing UNIQUE
+    -- on email caused login to 500 with users_email_key violations on the
+    -- upsert INSERT path before ON CONFLICT (id) could fire.
     CREATE TABLE IF NOT EXISTS users (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid()::text,
-      email VARCHAR UNIQUE,
+      email VARCHAR,
       first_name VARCHAR,
       last_name VARCHAR,
       profile_image_url VARCHAR,
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW()
     );
+
+    -- Migration: drop legacy UNIQUE constraint on users.email if present.
+    -- Older deploys created the table with email VARCHAR UNIQUE which
+    -- breaks login for the case described above. Safe to run repeatedly.
+    ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
 
     -- Session store for connect-pg-simple. Schema is mandated by the library.
     CREATE TABLE IF NOT EXISTS sessions (
