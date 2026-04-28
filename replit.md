@@ -140,7 +140,17 @@ when signed in.
 
 Every successful chat and image request appends a row to `usage_events` (user_id, kind, model_id, provider, tokens, cost, latency_ms, total_ms, success, created_at). `/api/models` and `/api/models/:id` derive `latency_ms` and `throughput_tokens_per_second` from these events (avg over the last 7 days, requires ≥3 successful chat events for a model). When there's not enough data the API returns `null` for those fields and the catalog UI renders `—`.
 
-All endpoints live in `server/api.ts` (or `server/chat.ts` for `/api/chat`) and are registered in `server/index.ts`.
+All endpoints live in `server/api.ts` (or `server/chat.ts` for `/api/chat`, `server/anthropicCompat.ts` for the Anthropic-compatible surface) and are registered in `server/index.ts`.
+
+### Anthropic-Compatible Endpoint
+
+`POST /api/v1/messages` (also mounted at `/v1/messages`) is a drop-in surface for the official Anthropic SDKs (`@anthropic-ai/sdk`, `anthropic` for Python). Implemented in `server/anthropicCompat.ts`. Auth accepts both `x-api-key: sk-sb-v1-…` (Anthropic SDK default) and `Authorization: Bearer sk-sb-v1-…` via the new `requireApiKeyAnthropic` middleware in `server/auth.ts`.
+
+Request body matches Anthropic's `/v1/messages`: `{ model, messages, max_tokens, system?, temperature?, stream? }`. The `model` field accepts any Orbitron catalog id (e.g. `gpt-5.4`, `gemini-3-pro`) **or** Anthropic's dashed names (e.g. `claude-sonnet-4-6`); `resolveCatalogId()` rewrites dashed → dotted and tolerates `-YYYYMMDD` snapshot suffixes. `system` and message `content` accept either a string or an array of `{ type:"text", text }` blocks; non-text blocks are dropped (vision/tool passthrough is not supported on the compat surface — use `/api/chat` for those).
+
+Routing reuses the same exported `runOpenAI` / `runAnthropic` / `runGemini` runners and `openAIMap` / `anthropicMap` / `geminiMap` from `server/chat.ts`, so any catalog model is reachable through the Anthropic shape (the OpenRouter trick). Tools are not enabled on this path. Credit reservation, refund, audit, and `recordUsage` mirror `/api/chat` exactly so spend math is consistent across both surfaces.
+
+Non-streaming responses return Anthropic's `Message` shape (`{ id:"msg_…", type, role:"assistant", content:[{type:"text",text}], model, stop_reason, stop_sequence, usage }`). Streaming (`stream:true`) emits the named SSE event sequence: `message_start` → `content_block_start` → `content_block_delta` (×N) → `content_block_stop` → optional `error` → `message_delta` → `message_stop`. `stop_reason` is `max_tokens` when output hits the cap, otherwise `end_turn` (or `error` on a runner failure during streaming).
 
 ### Catalog → real model mapping
 
@@ -181,6 +191,7 @@ Every catalog entry maps 1:1 to a real, currently-supported model on the AI Inte
 server/
   index.ts               Express + Vite middleware, port 5000
   chat.ts                /api/chat — provider routing + SSE streaming
+  anthropicCompat.ts     /api/v1/messages — Anthropic SDK-compatible shape
   api.ts                 /api/status, /api/models, /api/models/:id, /api/images
 src/
   App.tsx                Routes + Cmd+K palette

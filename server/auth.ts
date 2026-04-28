@@ -223,6 +223,62 @@ export async function requireApiKey(
 }
 
 /**
+ * Express middleware: require a valid API key, accepting EITHER
+ *   - `Authorization: Bearer <key>` (OpenAI/Orbitron convention), or
+ *   - `x-api-key: <key>` (Anthropic SDK convention).
+ *
+ * Used by the Anthropic-compatible /v1/messages endpoint so that off-the-shelf
+ * Anthropic clients (which always send x-api-key) can talk to Orbitron without
+ * modification.
+ */
+export async function requireApiKeyAnthropic(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  let token = "";
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
+    token = authHeader.slice(7).trim();
+  }
+  if (!token) {
+    const xKey = req.headers["x-api-key"];
+    if (typeof xKey === "string") token = xKey.trim();
+  }
+  if (!token) {
+    return res.status(401).json({
+      type: "error",
+      error: {
+        type: "authentication_error",
+        message:
+          "Missing API key. Pass 'x-api-key: <api key>' or 'Authorization: Bearer <api key>'. Generate a key at /keys.",
+      },
+    });
+  }
+  if (!token.startsWith(KEY_PREFIX)) {
+    return res.status(401).json({
+      type: "error",
+      error: {
+        type: "authentication_error",
+        message: `Invalid API key format. Orbitron keys start with '${KEY_PREFIX}'.`,
+      },
+    });
+  }
+  const result = await getUserFromBearer(token);
+  if (!result) {
+    return res.status(401).json({
+      type: "error",
+      error: {
+        type: "authentication_error",
+        message: "Invalid or revoked API key.",
+      },
+    });
+  }
+  req.auth = { user: result.user, via: "api_key", apiKeyId: result.keyId };
+  next();
+}
+
+/**
  * Express middleware: require a Replit Auth session (used for /api/keys).
  * Wraps Replit Auth's `isAuthenticated` (which handles token refresh) and then
  * loads the database user record into req.auth.

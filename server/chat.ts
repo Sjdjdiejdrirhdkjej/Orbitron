@@ -39,7 +39,7 @@ const gemini = new GoogleGenAI({
   },
 });
 
-const openAIMap: Record<string, string> = {
+export const openAIMap: Record<string, string> = {
   "gpt-5.5": "gpt-5.5",
   "gpt-5.4": "gpt-5.4",
   "gpt-5.2": "gpt-5.2",
@@ -55,7 +55,7 @@ const openAIMap: Record<string, string> = {
   "o3": "o3",
 };
 
-const anthropicMap: Record<string, string> = {
+export const anthropicMap: Record<string, string> = {
   "claude-opus-4.7": "claude-opus-4-7",
   "claude-sonnet-4.6": "claude-sonnet-4-6",
   "claude-opus-4.6": "claude-opus-4-6",
@@ -65,7 +65,7 @@ const anthropicMap: Record<string, string> = {
   "claude-opus-4.1": "claude-opus-4-1",
 };
 
-const geminiMap: Record<string, string> = {
+export const geminiMap: Record<string, string> = {
   "gemini-3-pro": "gemini-3-pro",
   "gemini-3-flash": "gemini-3-flash",
   "gemini-2.5-pro": "gemini-2.5-pro",
@@ -74,7 +74,7 @@ const geminiMap: Record<string, string> = {
   "gemini-2.0-flash-thinking": "gemini-2.0-flash-thinking",
 };
 
-interface ChatMessage {
+export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
 }
@@ -89,19 +89,19 @@ interface ChatBody {
 }
 
 /** Hard cap on tool-use rounds per request — guards against runaway loops. */
-const MAX_TOOL_ITERATIONS = 4;
+export const MAX_TOOL_ITERATIONS = 4;
 
 /** Hard cap on max_tokens we'll honor regardless of what the client requests.
  * Prevents an attacker from passing maxTokens=1_000_000 to balloon the
  * provider bill (and the server-side credit reservation that protects it). */
-const MAX_OUTPUT_TOKENS_HARD_CAP = 8192;
+export const MAX_OUTPUT_TOKENS_HARD_CAP = 8192;
 
 /** Hard cap on the number of messages we'll process in a single request.
  * Pairs with the express.json 10mb body limit to bound the worst-case input
  * cost a depleted user could try to slip past credit reservation. */
-const MAX_MESSAGES_PER_REQUEST = 200;
+export const MAX_MESSAGES_PER_REQUEST = 200;
 
-function approxTokens(text: string): number {
+export function approxTokens(text: string): number {
   // Rough estimate: ~4 chars per token. Good enough for cost preview.
   return Math.max(1, Math.ceil(text.length / 4));
 }
@@ -111,7 +111,7 @@ function approxTokens(text: string): number {
  * text deltas via `onText` and tool lifecycle events via `onTool*`. The route
  * handler turns those into SSE events.
  */
-interface StreamCtx {
+export interface StreamCtx {
   onText(delta: string): void;
   onToolStart(callId: string, name: string, args: Record<string, unknown>): void;
   onToolEnd(callId: string, results: WebSearchResult[]): void;
@@ -168,7 +168,7 @@ interface OpenAIToolCall {
   function: { name: string; arguments: string };
 }
 
-async function runOpenAI(opts: {
+export async function runOpenAI(opts: {
   model: string;
   messages: ChatMessage[];
   temperature?: number;
@@ -297,7 +297,7 @@ async function runOpenAI(opts: {
 // Anthropic runner
 // ---------------------------------------------------------------------------
 
-async function runAnthropic(opts: {
+export async function runAnthropic(opts: {
   model: string;
   messages: ChatMessage[];
   temperature?: number;
@@ -402,7 +402,7 @@ async function runAnthropic(opts: {
 // Gemini runner
 // ---------------------------------------------------------------------------
 
-async function runGemini(opts: {
+export async function runGemini(opts: {
   model: string;
   messages: ChatMessage[];
   temperature?: number;
